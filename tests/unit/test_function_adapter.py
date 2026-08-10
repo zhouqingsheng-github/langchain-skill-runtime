@@ -5,6 +5,7 @@ import pytest
 from langchain_skill_runtime.adapters.function import PythonFunctionAdapter
 from langchain_skill_runtime.errors import (
     FunctionNotRegisteredError,
+    ToolExecutionError,
     ToolExecutionTimeoutError,
     ToolOutputTooLargeError,
     ToolOutputValidationError,
@@ -151,3 +152,49 @@ async def test_function_adapter_awaits_async_callable_object() -> None:
     )
 
     assert await tool.ainvoke({"a": 4, "b": 6}) == 10
+
+
+@pytest.mark.asyncio
+async def test_function_adapter_preserves_allowed_additional_properties() -> None:
+    registry = InMemoryFunctionRegistry()
+
+    def collect_arguments(**arguments: object) -> dict[str, object]:
+        return arguments
+
+    registry.register("math.add", collect_arguments)
+    definition = function_definition().model_copy(
+        update={
+            "input_schema": {
+                "type": "object",
+                "properties": {"a": {"type": "integer"}},
+                "required": ["a"],
+                "additionalProperties": True,
+            }
+        }
+    )
+    tool = await PythonFunctionAdapter(registry).build(definition, CompileContext())
+
+    assert await tool.ainvoke({"a": 1, "extra": "kept"}) == {
+        "a": 1,
+        "extra": "kept",
+    }
+
+
+@pytest.mark.asyncio
+async def test_function_adapter_sanitizes_execution_failure() -> None:
+    registry = InMemoryFunctionRegistry()
+
+    def fail(a: int, b: int) -> int:
+        del a, b
+        raise RuntimeError("secret-token /internal/function/path")
+
+    registry.register("math.add", fail)
+    tool = await PythonFunctionAdapter(registry).build(
+        function_definition(), CompileContext()
+    )
+
+    with pytest.raises(ToolExecutionError) as captured:
+        await tool.ainvoke({"a": 1, "b": 2})
+
+    assert "secret-token" not in str(captured.value)
+    assert "/internal/function/path" not in str(captured.value)

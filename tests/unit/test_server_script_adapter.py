@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from langchain_skill_runtime.adapters.server_script import ServerScriptAdapter
-from langchain_skill_runtime.errors import ToolDefinitionError
+from langchain_skill_runtime.errors import ToolDefinitionError, ToolExecutionError
 from langchain_skill_runtime.models.context import CompileContext
 from langchain_skill_runtime.models.tool import ResolvedToolDefinition, ToolType
 
@@ -60,3 +60,28 @@ async def test_script_adapter_rejects_blank_artifact_id() -> None:
         await ServerScriptAdapter(RecordingScriptExecutor()).build(
             script_definition(""), CompileContext()
         )
+
+
+class FailingScriptExecutor(RecordingScriptExecutor):
+    async def execute(
+        self,
+        artifact_id: str,
+        arguments: Mapping[str, Any],
+        context: CompileContext,
+        timeout_seconds: float,
+    ) -> Any:
+        del artifact_id, arguments, context, timeout_seconds
+        raise RuntimeError("secret-token /internal/script/path")
+
+
+@pytest.mark.asyncio
+async def test_script_adapter_sanitizes_execution_failure() -> None:
+    tool = await ServerScriptAdapter(FailingScriptExecutor()).build(
+        script_definition(), CompileContext()
+    )
+
+    with pytest.raises(ToolExecutionError) as captured:
+        await tool.ainvoke({"title": "日报"})
+
+    assert "secret-token" not in str(captured.value)
+    assert "/internal/script/path" not in str(captured.value)

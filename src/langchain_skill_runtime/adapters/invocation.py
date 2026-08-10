@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from langchain_skill_runtime.errors import (
     ToolDefinitionError,
+    ToolExecutionError,
     ToolExecutionTimeoutError,
     ToolOutputTooLargeError,
     ToolOutputValidationError,
@@ -34,12 +35,25 @@ class ToolInvocationGuard:
                 ) from exc
             self._output_validator = Draft202012Validator(definition.output_schema)
 
-    async def invoke(self, operation: Callable[[], Awaitable[Any]]) -> Any:
+    async def invoke(
+        self,
+        operation: Callable[[], Awaitable[Any]],
+        *,
+        enforce_timeout: bool = True,
+        passthrough_errors: tuple[type[Exception], ...] = (),
+    ) -> Any:
         try:
-            async with asyncio.timeout(self._timeout_seconds):
+            if enforce_timeout:
+                async with asyncio.timeout(self._timeout_seconds):
+                    result = await operation()
+            else:
                 result = await operation()
         except TimeoutError:
             raise ToolExecutionTimeoutError("Tool 执行超时") from None
+        except Exception as exc:
+            if isinstance(exc, passthrough_errors):
+                raise
+            raise ToolExecutionError("Tool 执行失败") from None
 
         if self._output_validator is not None:
             errors = list(self._output_validator.iter_errors(result))

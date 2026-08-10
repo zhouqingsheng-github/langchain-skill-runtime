@@ -67,8 +67,6 @@ class LangChainMcpToolProvider:
         try:
             client = self._client_factory({server_name: dict(resolved)})
             tools = await client.get_tools(server_name=server_name)
-        except ToolDefinitionError:
-            raise
         except Exception:  # noqa: BLE001 - sanitize arbitrary MCP client failures
             raise ToolUnavailableError("MCP 工具发现失败") from None
         return next((item for item in tools if item.name == tool_name), None)
@@ -81,7 +79,10 @@ class LangChainMcpToolProvider:
                     raise ToolDefinitionError("MCP secret_ref 不能为空")
                 if self._secret_provider is None:
                     raise ToolDefinitionError("MCP Secret 引用缺少 SecretProvider")
-                return await self._secret_provider.resolve(reference, context)
+                try:
+                    return await self._secret_provider.resolve(reference, context)
+                except Exception:  # noqa: BLE001 - sanitize external provider failures
+                    raise ToolUnavailableError("MCP Secret 解析失败") from None
             return {
                 str(key): await self._resolve_value(item, context)
                 for key, item in value.items()

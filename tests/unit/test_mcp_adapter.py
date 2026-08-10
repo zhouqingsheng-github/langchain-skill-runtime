@@ -9,7 +9,11 @@ from langchain_skill_runtime.adapters.mcp import (
     LangChainMcpToolProvider,
     McpToolAdapter,
 )
-from langchain_skill_runtime.errors import ToolDefinitionError, ToolUnavailableError
+from langchain_skill_runtime.errors import (
+    ToolDefinitionError,
+    ToolExecutionError,
+    ToolUnavailableError,
+)
 from langchain_skill_runtime.models.context import CompileContext
 from langchain_skill_runtime.models.tool import ResolvedToolDefinition, ToolType
 
@@ -97,6 +101,12 @@ class FakeMcpClient:
         return [mcp_echo]
 
 
+class DefinitionFailingMcpClient:
+    async def get_tools(self, *, server_name: str | None = None) -> list[BaseTool]:
+        del server_name
+        raise ToolDefinitionError("secret-token /internal/mcp/discovery")
+
+
 @pytest.mark.asyncio
 async def test_langchain_provider_resolves_secret_references() -> None:
     created_connections: list[dict[str, Mapping[str, Any]]] = []
@@ -144,6 +154,12 @@ class FailingSecretProvider:
         raise RuntimeError("resolved-secret-token /internal/secret/path")
 
 
+class DefinitionFailingSecretProvider:
+    async def resolve(self, reference: str, context: CompileContext) -> str:
+        del reference, context
+        raise ToolDefinitionError("resolved-secret-token /internal/secret/path")
+
+
 @pytest.mark.asyncio
 async def test_langchain_provider_sanitizes_secret_provider_failure() -> None:
     provider = LangChainMcpToolProvider(secret_provider=FailingSecretProvider())
@@ -165,6 +181,44 @@ async def test_langchain_provider_sanitizes_secret_provider_failure() -> None:
     error_text = str(captured.value)
     assert "resolved-secret-token" not in error_text
     assert "/internal/secret/path" not in error_text
+
+
+@pytest.mark.asyncio
+async def test_langchain_provider_sanitizes_secret_provider_definition_error() -> None:
+    provider = LangChainMcpToolProvider(
+        secret_provider=DefinitionFailingSecretProvider()
+    )
+
+    with pytest.raises(ToolUnavailableError) as captured:
+        await provider.get_tool(
+            "echo",
+            "mcp_echo",
+            {"headers": {"Authorization": {"secret_ref": "mcp/test/token"}}},
+            CompileContext(),
+        )
+
+    error_text = str(captured.value)
+    assert "resolved-secret-token" not in error_text
+    assert "/internal/secret/path" not in error_text
+
+
+@pytest.mark.asyncio
+async def test_langchain_provider_sanitizes_mcp_discovery_definition_error() -> None:
+    provider = LangChainMcpToolProvider(
+        client_factory=lambda connections: DefinitionFailingMcpClient()
+    )
+
+    with pytest.raises(ToolUnavailableError) as captured:
+        await provider.get_tool(
+            "echo",
+            "mcp_echo",
+            {"transport": "stdio", "command": "python"},
+            CompileContext(),
+        )
+
+    error_text = str(captured.value)
+    assert "secret-token" not in error_text
+    assert "/internal/mcp/discovery" not in error_text
 
 
 @tool
@@ -197,3 +251,24 @@ async def test_mcp_adapter_rejects_remote_required_argument_not_in_binding() -> 
         await McpToolAdapter(RecordingProvider(mcp_echo_requiring_scope)).build(
             definition(), CompileContext()
         )
+
+
+@tool
+async def failing_mcp_echo(text: str) -> str:
+    """Fail with an intentionally sensitive implementation message."""
+
+    del text
+    raise RuntimeError("secret-token /internal/mcp/path")
+
+
+@pytest.mark.asyncio
+async def test_mcp_adapter_sanitizes_execution_failure() -> None:
+    built = await McpToolAdapter(RecordingProvider(failing_mcp_echo)).build(
+        definition(), CompileContext()
+    )
+
+    with pytest.raises(ToolExecutionError) as captured:
+        await built.ainvoke({"text": "ok"})
+
+    assert "secret-token" not in str(captured.value)
+    assert "/internal/mcp/path" not in str(captured.value)

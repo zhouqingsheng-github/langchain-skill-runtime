@@ -11,7 +11,11 @@ from langchain_skill_runtime.adapters.structured import (
 )
 from langchain_skill_runtime.client.models import ClientToolRequest
 from langchain_skill_runtime.client.transport import ClientToolTransport
-from langchain_skill_runtime.errors import ToolDefinitionError, ToolUnavailableError
+from langchain_skill_runtime.errors import (
+    ClientToolError,
+    ToolDefinitionError,
+    ToolUnavailableError,
+)
 from langchain_skill_runtime.models.context import CompileContext
 from langchain_skill_runtime.models.tool import ResolvedToolDefinition, ToolType
 from langchain_skill_runtime.schemas.json_schema import JsonSchemaModelFactory
@@ -69,18 +73,25 @@ class ClientJavascriptAdapter:
 
         async def execute_client_tool(**arguments: Any) -> Any:
             async def execute() -> Any:
-                result = await self._transport.invoke(
-                    ClientToolRequest(
-                        session_id=context.session_id or "",
-                        tool_id=tool_key,
-                        tool_version=definition.version,
-                        arguments=arguments,
-                        timeout_seconds=definition.timeout_seconds,
+                try:
+                    result = await self._transport.invoke(
+                        ClientToolRequest(
+                            session_id=context.session_id or "",
+                            tool_id=tool_key,
+                            tool_version=definition.version,
+                            arguments=arguments,
+                            timeout_seconds=definition.timeout_seconds,
+                        )
                     )
-                )
+                except ClientToolError as exc:
+                    raise type(exc)("客户端 Tool 执行失败") from None
                 return result.output
 
-            return await guard.invoke(execute)
+            return await guard.invoke(
+                execute,
+                enforce_timeout=False,
+                passthrough_errors=(ClientToolError,),
+            )
 
         return SchemaValidatedStructuredTool.from_function(
             coroutine=execute_client_tool,

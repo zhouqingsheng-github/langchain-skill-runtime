@@ -37,6 +37,10 @@ class ToolBuildError(SkillRuntimeError):
     """A Tool could not be converted to a LangChain BaseTool."""
 
 
+class ToolExecutionError(SkillRuntimeError):
+    """A Tool invocation failed without exposing implementation details."""
+
+
 class ToolExecutionTimeoutError(SkillRuntimeError):
     """A Tool invocation exceeded its configured timeout."""
 

@@ -26,11 +26,7 @@ class SchemaValidatedStructuredTool(StructuredTool):
             and issubclass(args_schema, BaseModel)
         ):
             validated = args_schema.model_validate(tool_input)
-            result = {
-                key: getattr(validated, key)
-                for key in tool_input
-                if key in args_schema.model_fields
-            }
+            result = validated.model_dump(exclude_unset=True)
             for key in self.explicit_default_fields:
                 if key not in result:
                     result[key] = getattr(validated, key)

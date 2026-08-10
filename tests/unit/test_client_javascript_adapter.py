@@ -10,7 +10,11 @@ from langchain_skill_runtime.client.models import (
     ClientToolResult,
     ClientToolStatus,
 )
-from langchain_skill_runtime.errors import ToolUnavailableError
+from langchain_skill_runtime.errors import (
+    ClientToolTimeoutError,
+    ToolExecutionError,
+    ToolUnavailableError,
+)
 from langchain_skill_runtime.models.context import ClientCapability, CompileContext
 from langchain_skill_runtime.models.tool import ResolvedToolDefinition, ToolType
 
@@ -112,3 +116,41 @@ async def test_client_adapter_rejects_offline_transport() -> None:
         await ClientJavascriptAdapter(RecordingTransport(available=False)).build(
             definition(), context()
         )
+
+
+class TimeoutTransport(RecordingTransport):
+    async def invoke(self, call: ClientToolRequest) -> ClientToolResult:
+        del call
+        raise ClientToolTimeoutError("secret-token /internal/client/timeout")
+
+
+@pytest.mark.asyncio
+async def test_client_adapter_preserves_transport_timeout_type() -> None:
+    tool = await ClientJavascriptAdapter(TimeoutTransport()).build(
+        definition(), context()
+    )
+
+    with pytest.raises(ClientToolTimeoutError) as captured:
+        await tool.ainvoke({"format": "xlsx"})
+
+    assert "secret-token" not in str(captured.value)
+    assert "/internal/client/timeout" not in str(captured.value)
+
+
+class FailingTransport(RecordingTransport):
+    async def invoke(self, call: ClientToolRequest) -> ClientToolResult:
+        del call
+        raise RuntimeError("secret-token /internal/client/path")
+
+
+@pytest.mark.asyncio
+async def test_client_adapter_sanitizes_unknown_transport_failure() -> None:
+    tool = await ClientJavascriptAdapter(FailingTransport()).build(
+        definition(), context()
+    )
+
+    with pytest.raises(ToolExecutionError) as captured:
+        await tool.ainvoke({"format": "xlsx"})
+
+    assert "secret-token" not in str(captured.value)
+    assert "/internal/client/path" not in str(captured.value)
