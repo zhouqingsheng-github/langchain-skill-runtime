@@ -2,8 +2,13 @@
 
 from typing import Any
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import BaseTool
 
+from langchain_skill_runtime.adapters.invocation import ToolInvocationGuard
+from langchain_skill_runtime.adapters.structured import (
+    SchemaValidatedStructuredTool,
+    explicit_default_fields,
+)
 from langchain_skill_runtime.client.models import ClientToolRequest
 from langchain_skill_runtime.client.transport import ClientToolTransport
 from langchain_skill_runtime.errors import ToolDefinitionError, ToolUnavailableError
@@ -60,22 +65,27 @@ class ClientJavascriptAdapter:
             f"{definition.name.title().replace('_', '')}Input",
             definition.input_schema,
         )
+        guard = ToolInvocationGuard(definition)
 
         async def execute_client_tool(**arguments: Any) -> Any:
-            result = await self._transport.invoke(
-                ClientToolRequest(
-                    session_id=context.session_id or "",
-                    tool_id=tool_key,
-                    tool_version=definition.version,
-                    arguments=arguments,
-                    timeout_seconds=definition.timeout_seconds,
+            async def execute() -> Any:
+                result = await self._transport.invoke(
+                    ClientToolRequest(
+                        session_id=context.session_id or "",
+                        tool_id=tool_key,
+                        tool_version=definition.version,
+                        arguments=arguments,
+                        timeout_seconds=definition.timeout_seconds,
+                    )
                 )
-            )
-            return result.output
+                return result.output
 
-        return StructuredTool.from_function(
+            return await guard.invoke(execute)
+
+        return SchemaValidatedStructuredTool.from_function(
             coroutine=execute_client_tool,
             name=definition.name,
             description=definition.description,
             args_schema=args_model,
+            explicit_default_fields=explicit_default_fields(definition.input_schema),
         )

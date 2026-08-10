@@ -6,7 +6,10 @@ from typing import Protocol
 
 from langchain_skill_runtime.client.models import ClientToolRequest, ClientToolResult
 from langchain_skill_runtime.client.pending_calls import PendingCallManager
-from langchain_skill_runtime.errors import ClientToolTimeoutError
+from langchain_skill_runtime.errors import (
+    ClientToolConnectionLostError,
+    ClientToolTimeoutError,
+)
 
 
 class ClientToolTransport(Protocol):
@@ -51,7 +54,12 @@ class PendingClientToolTransport:
     async def invoke(self, request: ClientToolRequest) -> ClientToolResult:
         future = await self._pending.register(request)
         try:
-            await self._sender(request)
+            try:
+                await self._sender(request)
+            except Exception:  # noqa: BLE001 - sanitize business transport failures
+                raise ClientToolConnectionLostError(
+                    "客户端 Tool 请求发送失败"
+                ) from None
             try:
                 return await asyncio.wait_for(
                     asyncio.shield(future),

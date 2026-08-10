@@ -183,3 +183,14 @@ async def test_runtime_fingerprint_changes_only_with_compiled_versions() -> None
 
     assert first.fingerprint == same.fingerprint
     assert first.fingerprint != changed.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_duplicate_exposed_tool_names() -> None:
+    first = tool_definition("successful_tool", sort_order=1)
+    second = tool_definition("successful_tool", sort_order=2).model_copy(
+        update={"id": "another-tool-id"}
+    )
+
+    with pytest.raises(SkillCompileError, match="重复"):
+        await runtime(skill(), [first, second]).compile("skill-1", CompileContext())

@@ -3,12 +3,13 @@ from typing import Any
 
 import pytest
 from langchain_core.tools import BaseTool, tool
+from pydantic import ValidationError
 
 from langchain_skill_runtime.adapters.mcp import (
     LangChainMcpToolProvider,
     McpToolAdapter,
 )
-from langchain_skill_runtime.errors import ToolUnavailableError
+from langchain_skill_runtime.errors import ToolDefinitionError, ToolUnavailableError
 from langchain_skill_runtime.models.context import CompileContext
 from langchain_skill_runtime.models.tool import ResolvedToolDefinition, ToolType
 
@@ -135,3 +136,64 @@ async def test_langchain_provider_resolves_secret_references() -> None:
             }
         }
     ]
+
+
+class FailingSecretProvider:
+    async def resolve(self, reference: str, context: CompileContext) -> str:
+        del reference, context
+        raise RuntimeError("resolved-secret-token /internal/secret/path")
+
+
+@pytest.mark.asyncio
+async def test_langchain_provider_sanitizes_secret_provider_failure() -> None:
+    provider = LangChainMcpToolProvider(secret_provider=FailingSecretProvider())
+
+    with pytest.raises(ToolUnavailableError) as captured:
+        await provider.get_tool(
+            "echo",
+            "mcp_echo",
+            {
+                "transport": "http",
+                "url": "https://example.invalid/mcp",
+                "headers": {
+                    "Authorization": {"secret_ref": "mcp/test/token"},
+                },
+            },
+            CompileContext(),
+        )
+
+    error_text = str(captured.value)
+    assert "resolved-secret-token" not in error_text
+    assert "/internal/secret/path" not in error_text
+
+
+@tool
+async def mcp_echo_with_privilege(text: str, privileged: bool = False) -> str:
+    """Echo text and expose a remote-only privileged argument."""
+
+    return f"mcp:{text}:{privileged}"
+
+
+@pytest.mark.asyncio
+async def test_mcp_adapter_enforces_repository_input_schema() -> None:
+    built = await McpToolAdapter(RecordingProvider(mcp_echo_with_privilege)).build(
+        definition(), CompileContext()
+    )
+
+    with pytest.raises(ValidationError, match="privileged"):
+        await built.ainvoke({"text": "ok", "privileged": True})
+
+
+@tool
+async def mcp_echo_requiring_scope(text: str, scope: str) -> str:
+    """Echo text but require an unbound remote argument."""
+
+    return f"mcp:{scope}:{text}"
+
+
+@pytest.mark.asyncio
+async def test_mcp_adapter_rejects_remote_required_argument_not_in_binding() -> None:
+    with pytest.raises(ToolDefinitionError, match="scope"):
+        await McpToolAdapter(RecordingProvider(mcp_echo_requiring_scope)).build(
+            definition(), CompileContext()
+        )

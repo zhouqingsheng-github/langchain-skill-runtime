@@ -127,3 +127,39 @@ async def test_transport_converts_remote_error_to_typed_exception() -> None:
     assert await transport.accept_result(result) is True
     with pytest.raises(ClientToolExecutionError, match="导出失败"):
         await invocation
+
+
+@pytest.mark.asyncio
+async def test_transport_sanitizes_sender_connection_failure() -> None:
+    async def sender(call: ClientToolRequest) -> None:
+        del call
+        raise ConnectionError("websocket-token /internal/socket/path")
+
+    transport = PendingClientToolTransport(sender)
+
+    with pytest.raises(ClientToolConnectionLostError) as captured:
+        await transport.invoke(request())
+
+    error_text = str(captured.value)
+    assert "websocket-token" not in error_text
+    assert "/internal/socket/path" not in error_text
+
+
+@pytest.mark.asyncio
+async def test_transport_correlates_concurrent_results_in_reverse_order() -> None:
+    sent: asyncio.Queue[ClientToolRequest] = asyncio.Queue()
+
+    async def sender(call: ClientToolRequest) -> None:
+        await sent.put(call)
+
+    transport = PendingClientToolTransport(sender)
+    first_invocation = asyncio.create_task(transport.invoke(request()))
+    second_invocation = asyncio.create_task(transport.invoke(request()))
+    first_request = await sent.get()
+    second_request = await sent.get()
+
+    await transport.accept_result(successful_result(second_request))
+    await transport.accept_result(successful_result(first_request))
+
+    assert (await first_invocation).call_id == first_request.call_id
+    assert (await second_invocation).call_id == second_request.call_id

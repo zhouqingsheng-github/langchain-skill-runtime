@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 
 from langchain_core.tools import BaseTool
@@ -65,6 +66,7 @@ class SkillRuntime:
             await self._tool_repository.list_tools(skill_id, context),
             key=lambda item: item.sort_order,
         )
+        self._validate_exposed_names(resolved_tools)
         diagnostics.extend(self._binding_diagnostics(governed, resolved_tools))
 
         built_tools: list[BaseTool] = []
@@ -191,3 +193,15 @@ class SkillRuntime:
             separators=(",", ":"),
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _validate_exposed_names(tools: Sequence[ResolvedToolDefinition]) -> None:
+        seen: set[str] = set()
+        for tool in tools:
+            if not tool.enabled:
+                continue
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", tool.name) is None:
+                raise SkillCompileError("Tool 名称不符合模型调用约束")
+            if tool.name in seen:
+                raise SkillCompileError(f"存在重复 Tool 名称: {tool.name}")
+            seen.add(tool.name)

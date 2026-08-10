@@ -2,8 +2,13 @@
 
 from typing import Any
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import BaseTool
 
+from langchain_skill_runtime.adapters.invocation import ToolInvocationGuard
+from langchain_skill_runtime.adapters.structured import (
+    SchemaValidatedStructuredTool,
+    explicit_default_fields,
+)
 from langchain_skill_runtime.errors import ToolDefinitionError
 from langchain_skill_runtime.executors.server_script_executor import (
     ServerScriptExecutor,
@@ -42,18 +47,23 @@ class ServerScriptAdapter:
             f"{definition.name.title().replace('_', '')}Input",
             definition.input_schema,
         )
+        guard = ToolInvocationGuard(definition)
 
         async def execute_script(**arguments: Any) -> Any:
-            return await self._executor.execute(
-                artifact_id=artifact_id,
-                arguments=arguments,
-                context=context,
-                timeout_seconds=float(definition.timeout_seconds),
-            )
+            async def execute() -> Any:
+                return await self._executor.execute(
+                    artifact_id=artifact_id,
+                    arguments=arguments,
+                    context=context,
+                    timeout_seconds=float(definition.timeout_seconds),
+                )
 
-        return StructuredTool.from_function(
+            return await guard.invoke(execute)
+
+        return SchemaValidatedStructuredTool.from_function(
             coroutine=execute_script,
             name=definition.name,
             description=definition.description,
             args_schema=args_model,
+            explicit_default_fields=explicit_default_fields(definition.input_schema),
         )

@@ -4,8 +4,13 @@ import asyncio
 import inspect
 from typing import Any
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import BaseTool
 
+from langchain_skill_runtime.adapters.invocation import ToolInvocationGuard
+from langchain_skill_runtime.adapters.structured import (
+    SchemaValidatedStructuredTool,
+    explicit_default_fields,
+)
 from langchain_skill_runtime.errors import (
     FunctionNotRegisteredError,
     ToolDefinitionError,
@@ -50,15 +55,23 @@ class PythonFunctionAdapter:
             f"{definition.name.title().replace('_', '')}Input",
             definition.input_schema,
         )
+        guard = ToolInvocationGuard(definition)
 
         async def invoke_function(**arguments: Any) -> Any:
-            if inspect.iscoroutinefunction(function):
-                return await function(**arguments)
-            return await asyncio.to_thread(function, **arguments)
+            async def execute() -> Any:
+                if inspect.iscoroutinefunction(function):
+                    return await function(**arguments)
+                result = await asyncio.to_thread(function, **arguments)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
 
-        return StructuredTool.from_function(
+            return await guard.invoke(execute)
+
+        return SchemaValidatedStructuredTool.from_function(
             coroutine=invoke_function,
             name=definition.name,
             description=definition.description,
             args_schema=args_model,
+            explicit_default_fields=explicit_default_fields(definition.input_schema),
         )

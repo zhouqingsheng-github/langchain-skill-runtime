@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, PositiveFloat
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt
 
 
 class ToolType(StrEnum):
@@ -28,6 +28,7 @@ class ToolDefinition(BaseModel):
     output_schema: dict[str, Any] | None = None
     execution_config: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: PositiveFloat = 30.0
+    max_output_bytes: PositiveInt = 1_048_576
     version: str
     enabled: bool = True
 
@@ -59,6 +60,7 @@ class ResolvedToolDefinition(BaseModel):
     output_schema: dict[str, Any] | None = None
     execution_config: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: PositiveFloat = 30.0
+    max_output_bytes: PositiveInt = 1_048_576
     version: str
     required: bool = True
     enabled: bool = True
@@ -84,6 +86,7 @@ class ResolvedToolDefinition(BaseModel):
                 **binding.config_override,
             },
             timeout_seconds=definition.timeout_seconds,
+            max_output_bytes=definition.max_output_bytes,
             version=definition.version,
             required=binding.required,
             enabled=definition.enabled and binding.enabled,

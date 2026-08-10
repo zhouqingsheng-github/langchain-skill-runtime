@@ -37,6 +37,18 @@ class ToolBuildError(SkillRuntimeError):
     """A Tool could not be converted to a LangChain BaseTool."""
 
 
+class ToolExecutionTimeoutError(SkillRuntimeError):
+    """A Tool invocation exceeded its configured timeout."""
+
+
+class ToolOutputValidationError(SkillRuntimeError):
+    """A Tool result did not match its output schema."""
+
+
+class ToolOutputTooLargeError(SkillRuntimeError):
+    """A Tool result exceeded its configured output limit."""
+
+
 class FunctionNotRegisteredError(ToolBuildError):
     """A configured function registry key is unknown."""
 

@@ -244,7 +244,24 @@ async def test_real_skill_compiles_and_executes_all_four_tool_types() -> None:
     assert mcp_result[0]["type"] == "text"
     assert mcp_result[0]["text"] == "mcp:hello"
 
-    model = ToolBindingFakeModel(messages=iter([AIMessage(content="装配成功")]))
+    model = ToolBindingFakeModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "add_numbers",
+                            "args": {"a": 3, "b": 4},
+                            "id": "agent-tool-call-1",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage(content="装配成功"),
+            ]
+        )
+    )
     agent = create_agent(
         model=model,
         tools=list(bundle.tools),
@@ -252,5 +269,9 @@ async def test_real_skill_compiles_and_executes_all_four_tool_types() -> None:
     )
     agent_result = await agent.ainvoke(
         {"messages": [{"role": "user", "content": "验证装配"}]}
+    )
+    assert any(
+        message.type == "tool" and message.content == "7"
+        for message in agent_result["messages"]
     )
     assert agent_result["messages"][-1].content == "装配成功"
