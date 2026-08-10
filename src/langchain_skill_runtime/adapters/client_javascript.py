@@ -1,5 +1,6 @@
 """Client JavaScript proxy Tool adapter."""
 
+import asyncio
 from typing import Any
 
 from langchain_core.tools import BaseTool
@@ -13,6 +14,7 @@ from langchain_skill_runtime.client.models import ClientToolRequest
 from langchain_skill_runtime.client.transport import ClientToolTransport
 from langchain_skill_runtime.errors import (
     ClientToolError,
+    ClientToolTimeoutError,
     ToolDefinitionError,
     ToolUnavailableError,
 )
@@ -74,15 +76,18 @@ class ClientJavascriptAdapter:
         async def execute_client_tool(**arguments: Any) -> Any:
             async def execute() -> Any:
                 try:
-                    result = await self._transport.invoke(
-                        ClientToolRequest(
-                            session_id=context.session_id or "",
-                            tool_id=tool_key,
-                            tool_version=definition.version,
-                            arguments=arguments,
-                            timeout_seconds=definition.timeout_seconds,
+                    async with asyncio.timeout(float(definition.timeout_seconds)):
+                        result = await self._transport.invoke(
+                            ClientToolRequest(
+                                session_id=context.session_id or "",
+                                tool_id=tool_key,
+                                tool_version=definition.version,
+                                arguments=arguments,
+                                timeout_seconds=definition.timeout_seconds,
+                            )
                         )
-                    )
+                except TimeoutError:
+                    raise ClientToolTimeoutError("客户端 Tool 执行超时") from None
                 except ClientToolError as exc:
                     raise type(exc)("客户端 Tool 执行失败") from None
                 return result.output

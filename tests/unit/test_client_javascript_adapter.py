@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import pytest
@@ -154,3 +155,20 @@ async def test_client_adapter_sanitizes_unknown_transport_failure() -> None:
 
     assert "secret-token" not in str(captured.value)
     assert "/internal/client/path" not in str(captured.value)
+
+
+class SlowTransport(RecordingTransport):
+    async def invoke(self, call: ClientToolRequest) -> ClientToolResult:
+        await asyncio.sleep(0.05)
+        return await super().invoke(call)
+
+
+@pytest.mark.asyncio
+async def test_client_adapter_enforces_timeout_when_transport_does_not() -> None:
+    slow_definition = definition().model_copy(update={"timeout_seconds": 0.01})
+    tool = await ClientJavascriptAdapter(SlowTransport()).build(
+        slow_definition, context()
+    )
+
+    with pytest.raises(ClientToolTimeoutError):
+        await tool.ainvoke({"format": "xlsx"})
