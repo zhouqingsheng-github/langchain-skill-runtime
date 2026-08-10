@@ -2,11 +2,15 @@
 name = "langchain-skill-runtime"
 version = "0.1.0"
 description = "Compile database-backed SKILL.md definitions and heterogeneous tools for LangChain agents"
-readme = "README.md"
-authors = [
-    { name = "zhouqingsheng", email = "17610725201@163.com" }
-]
+readme = "doc/项目说明.md"
 requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "jsonschema>=4.23,<5.0",
     "langchain-core>=1.0,<2.0",

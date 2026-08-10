@@ -141,9 +141,7 @@ async def test_runtime_stops_when_required_tool_fails() -> None:
     required_failure = tool_definition("successful_tool", fail=True)
 
     with pytest.raises(SkillCompileError, match="successful_tool") as captured:
-        await runtime(skill(), [required_failure]).compile(
-            "skill-1", CompileContext()
-        )
+        await runtime(skill(), [required_failure]).compile("skill-1", CompileContext())
 
     assert "internal failure detail" not in str(captured.value)
 
@@ -151,7 +149,9 @@ async def test_runtime_stops_when_required_tool_fails() -> None:
 @pytest.mark.asyncio
 async def test_runtime_skips_optional_tool_and_prompts_only_successful_tools() -> None:
     tools = [
-        tool_definition("optional_failed_tool", required=False, fail=True, sort_order=2),
+        tool_definition(
+            "optional_failed_tool", required=False, fail=True, sort_order=2
+        ),
         tool_definition("successful_tool", sort_order=1),
     ]
 

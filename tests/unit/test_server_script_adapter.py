@@ -51,9 +51,7 @@ async def test_script_adapter_delegates_to_executor() -> None:
     result = await tool.ainvoke({"title": "营业日报"})
 
     assert result == {"status": "generated", "title": "营业日报"}
-    assert executor.calls == [
-        ("report.test.v1", {"title": "营业日报"}, context, 12.0)
-    ]
+    assert executor.calls == [("report.test.v1", {"title": "营业日报"}, context, 12.0)]
 
 
 @pytest.mark.asyncio

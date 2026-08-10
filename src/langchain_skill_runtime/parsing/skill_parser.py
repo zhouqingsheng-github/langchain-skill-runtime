@@ -18,7 +18,11 @@ class SkillParser:
             raise SkillParseError("SKILL.md 缺少 YAML Frontmatter 起始分隔符")
 
         closing_index = next(
-            (index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"),
+            (
+                index
+                for index, line in enumerate(lines[1:], start=1)
+                if line.strip() == "---"
+            ),
             None,
         )
         if closing_index is None:

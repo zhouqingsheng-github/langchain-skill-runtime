@@ -226,9 +226,7 @@ async def test_real_skill_compiles_and_executes_all_four_tool_types() -> None:
         "title": "日报",
     }
 
-    client_invocation = asyncio.create_task(
-        bundle.tools[2].ainvoke({"format": "xlsx"})
-    )
+    client_invocation = asyncio.create_task(bundle.tools[2].ainvoke({"format": "xlsx"}))
     client_request = await client_requests.get()
     await transport.accept_result(
         ClientToolResult(

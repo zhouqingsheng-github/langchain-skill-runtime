@@ -54,7 +54,9 @@ class SkillRuntime:
             raise SkillDisabledError(f"Skill 已停用: {skill_id}")
 
         parsed = self._skill_parser.parse(skill.content)
-        diagnostics = self._governance_diagnostics(skill.name, skill.description, parsed)
+        diagnostics = self._governance_diagnostics(
+            skill.name, skill.description, parsed
+        )
         governed = parsed.model_copy(
             update={"name": skill.name, "description": skill.description}
         )

@@ -52,7 +52,9 @@ class PendingCallManager:
             if result.status is ClientToolStatus.SUCCESS:
                 pending.future.set_result(result)
             else:
-                message = result.error_message or result.error_code or "客户端工具执行失败"
+                message = (
+                    result.error_message or result.error_code or "客户端工具执行失败"
+                )
                 pending.future.set_exception(ClientToolExecutionError(message))
             return True
 
@@ -61,7 +63,8 @@ class PendingCallManager:
             affected = [
                 pending
                 for pending in self._pending.values()
-                if pending.request.session_id == session_id and not pending.future.done()
+                if pending.request.session_id == session_id
+                and not pending.future.done()
             ]
             for pending in affected:
                 pending.future.set_exception(

@@ -38,7 +38,9 @@ class FakeAdapter:
         )
 
 
-def definition(tool_type: ToolType = ToolType.PYTHON_FUNCTION) -> ResolvedToolDefinition:
+def definition(
+    tool_type: ToolType = ToolType.PYTHON_FUNCTION,
+) -> ResolvedToolDefinition:
     return ResolvedToolDefinition(
         id="tool-1",
         name="test_tool",
