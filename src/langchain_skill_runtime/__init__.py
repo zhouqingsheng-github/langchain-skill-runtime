@@ -9,6 +9,7 @@ from langchain_skill_runtime.models.tool import (
     ToolDefinition,
     ToolType,
 )
+from langchain_skill_runtime.runtime.skill_runtime import SkillRuntime
 
 __all__ = [
     "ClientCapability",
@@ -17,6 +18,7 @@ __all__ = [
     "ResolvedToolDefinition",
     "SkillBundle",
     "SkillDefinition",
+    "SkillRuntime",
     "SkillToolBinding",
     "ToolDefinition",
     "ToolType",
