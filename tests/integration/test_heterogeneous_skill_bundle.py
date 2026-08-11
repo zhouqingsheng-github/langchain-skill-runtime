@@ -33,8 +33,9 @@ from langchain_skill_runtime.models.skill import SkillDefinition
 from langchain_skill_runtime.models.tool import ResolvedToolDefinition, ToolType
 from langchain_skill_runtime.runtime.skill_runtime import SkillRuntime
 
-SKILL_PATH = Path("tests/fixtures/skills/heterogeneous-tools/SKILL.md")
-MCP_SERVER_PATH = Path("tests/fixtures/mcp/echo_server.py").resolve()
+TESTS_DIR = Path(__file__).resolve().parents[1]
+SKILL_PATH = TESTS_DIR / "fixtures/skills/heterogeneous-tools/SKILL.md"
+MCP_SERVER_PATH = TESTS_DIR / "fixtures/mcp/echo_server.py"
 
 
 class MemorySkillRepository:

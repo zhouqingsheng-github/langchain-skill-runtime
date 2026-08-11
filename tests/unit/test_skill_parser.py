@@ -5,7 +5,8 @@ import pytest
 from langchain_skill_runtime.errors import SkillParseError
 from langchain_skill_runtime.parsing.skill_parser import SkillParser
 
-FIXTURE = Path("tests/fixtures/skills/heterogeneous-tools/SKILL.md")
+TESTS_DIR = Path(__file__).resolve().parents[1]
+FIXTURE = TESTS_DIR / "fixtures/skills/heterogeneous-tools/SKILL.md"
 
 
 def test_parse_real_skill_fixture_preserves_instructions() -> None:
