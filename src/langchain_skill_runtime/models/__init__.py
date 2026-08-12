@@ -2,7 +2,11 @@
 
 from langchain_skill_runtime.models.bundle import SkillBundle
 from langchain_skill_runtime.models.context import ClientCapability, CompileContext
-from langchain_skill_runtime.models.skill import ParsedSkill, SkillDefinition
+from langchain_skill_runtime.models.skill import (
+    ParsedSkill,
+    SkillDefinition,
+    SkillDocument,
+)
 from langchain_skill_runtime.models.tool import (
     ResolvedToolDefinition,
     SkillToolBinding,
@@ -17,6 +21,7 @@ __all__ = [
     "ResolvedToolDefinition",
     "SkillBundle",
     "SkillDefinition",
+    "SkillDocument",
     "SkillToolBinding",
     "ToolDefinition",
     "ToolType",

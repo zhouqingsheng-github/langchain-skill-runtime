@@ -43,7 +43,7 @@ class SkillFileLoader:
             description=parsed.description,
             version=parsed.version,
             instructions=parsed.instructions,
-            allowed_tools=parsed.allowed_tools,
+            allowed_tools=parsed.allowed_tools or tuple(tool.name for tool in tools),
             tools=tools,
             source_root=source_root,
             metadata=parsed.metadata,

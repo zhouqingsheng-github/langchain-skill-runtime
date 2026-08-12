@@ -25,6 +25,10 @@ class SkillReadError(SkillRuntimeError):
     """The requested SKILL.md file cannot be read safely."""
 
 
+class SkillRuntimeConfigurationError(SkillRuntimeError):
+    """The selected compile mode is missing required runtime dependencies."""
+
+
 class ToolDefinitionError(SkillRuntimeError):
     """A Tool definition or input schema is invalid."""
 

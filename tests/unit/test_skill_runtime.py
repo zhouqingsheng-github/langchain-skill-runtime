@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from langchain_skill_runtime.errors import (
     SkillCompileError,
     SkillDisabledError,
     SkillNotFoundError,
+    SkillRuntimeConfigurationError,
     ToolBuildError,
 )
 from langchain_skill_runtime.models.context import CompileContext
@@ -194,3 +196,54 @@ async def test_runtime_rejects_duplicate_exposed_tool_names() -> None:
 
     with pytest.raises(SkillCompileError, match="重复"):
         await runtime(skill(), [first, second]).compile("skill-1", CompileContext())
+
+
+@pytest.mark.asyncio
+async def test_runtime_compiles_prompt_only_skill_file(tmp_path: Path) -> None:
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text(
+        """---
+id: market-skill
+name: market-skill
+description: 市场纯提示词技能
+version: 1.0.0
+---
+
+# 市场技能
+
+只使用提示词完成任务。
+""",
+        encoding="utf-8",
+    )
+    file_runtime = SkillRuntime(tool_factory=ToolFactory())
+
+    bundle = await file_runtime.compile_file(skill_path)
+
+    assert bundle.skill_id == "market-skill"
+    assert bundle.tools == ()
+    assert "只使用提示词完成任务" in bundle.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_runtime_compiles_skill_and_tool_objects_without_repositories() -> None:
+    object_runtime = SkillRuntime(
+        tool_factory=ToolFactory([RuntimeTestAdapter()]),
+    )
+
+    bundle = await object_runtime.compile_objects(
+        skill=skill(),
+        tools=[tool_definition("successful_tool")],
+        context=CompileContext(),
+    )
+
+    assert bundle.skill_id == "skill-1"
+    assert [item.name for item in bundle.tools] == ["successful_tool"]
+    assert bundle.name == "database-name"
+
+
+@pytest.mark.asyncio
+async def test_runtime_requires_repositories_only_for_legacy_compile() -> None:
+    repository_free_runtime = SkillRuntime(tool_factory=ToolFactory())
+
+    with pytest.raises(SkillRuntimeConfigurationError):
+        await repository_free_runtime.compile("skill-1", CompileContext())
