@@ -166,6 +166,31 @@ async def test_langchain_provider_resolves_secret_references() -> None:
 
 
 @pytest.mark.asyncio
+async def test_langchain_provider_preserves_legacy_positional_client_factory() -> None:
+    created_connections: list[dict[str, Mapping[str, Any]]] = []
+
+    def client_factory(
+        connections: dict[str, Mapping[str, Any]],
+    ) -> FakeMcpClient:
+        created_connections.append(connections)
+        return FakeMcpClient()
+
+    provider = LangChainMcpToolProvider(FakeSecretProvider(), client_factory)
+
+    built = await provider.get_tool(
+        "echo",
+        "mcp_echo",
+        {"transport": "stdio", "command": "python"},
+        CompileContext(tenant_id="tenant-1"),
+    )
+
+    assert built is mcp_echo
+    assert created_connections == [
+        {"echo": {"transport": "stdio", "command": "python"}}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_langchain_provider_resolves_registered_server_reference() -> None:
     created_connections: list[dict[str, Mapping[str, Any]]] = []
 
@@ -292,6 +317,46 @@ async def test_langchain_provider_rejects_plaintext_credentials(
             server_config,
             CompileContext(),
         )
+
+
+@pytest.mark.parametrize(
+    "server_config",
+    [
+        {
+            "transport": "http",
+            "url": "https://example.invalid/mcp?api-version=2026-08-12",
+            "headers": {"X-Tenant-ID": "tenant-1"},
+        },
+        {
+            "transport": "stdio",
+            "command": "python",
+            "env": {"LOG_LEVEL": "INFO"},
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_langchain_provider_allows_non_sensitive_literal_configuration(
+    server_config: Mapping[str, Any],
+) -> None:
+    created_connections: list[dict[str, Mapping[str, Any]]] = []
+
+    def client_factory(
+        connections: dict[str, Mapping[str, Any]],
+    ) -> FakeMcpClient:
+        created_connections.append(connections)
+        return FakeMcpClient()
+
+    provider = LangChainMcpToolProvider(client_factory=client_factory)
+
+    built = await provider.get_tool(
+        "echo",
+        "mcp_echo",
+        server_config,
+        CompileContext(),
+    )
+
+    assert built is mcp_echo
+    assert created_connections == [{"echo": dict(server_config)}]
 
 
 @pytest.mark.asyncio

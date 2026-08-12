@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
@@ -54,8 +54,9 @@ class LangChainMcpToolProvider:
     def __init__(
         self,
         secret_provider: SecretProvider | None = None,
-        server_config_provider: McpServerConfigProvider | None = None,
         client_factory: McpClientFactory | None = None,
+        *,
+        server_config_provider: McpServerConfigProvider | None = None,
     ) -> None:
         self._secret_provider = secret_provider
         self._server_config_provider = server_config_provider
@@ -116,25 +117,25 @@ class LangChainMcpToolProvider:
             if not isinstance(url, str):
                 raise ToolDefinitionError("MCP URL 配置非法")
             parsed = urlsplit(url)
-            if parsed.username or parsed.password or parsed.query or parsed.fragment:
-                raise ToolDefinitionError("MCP URL 不允许包含明文凭据或查询参数")
+            sensitive_query = any(
+                cls._is_sensitive_name(name)
+                for name, _ in parse_qsl(parsed.query, keep_blank_values=True)
+            )
+            sensitive_fragment = cls._is_sensitive_name(parsed.fragment)
+            if (
+                parsed.username
+                or parsed.password
+                or sensitive_query
+                or sensitive_fragment
+            ):
+                raise ToolDefinitionError("MCP URL 不允许包含明文凭据")
 
         headers = server_config.get("headers")
         if headers is not None:
             if not isinstance(headers, Mapping):
                 raise ToolDefinitionError("MCP headers 配置必须是对象")
-            safe_literal_headers = {
-                "accept",
-                "accept-encoding",
-                "content-type",
-                "user-agent",
-            }
             for name, value in headers.items():
-                if str(name).casefold() in safe_literal_headers and isinstance(
-                    value, str
-                ):
-                    continue
-                if not cls._is_secret_ref(value):
+                if cls._is_sensitive_name(name) and not cls._is_secret_ref(value):
                     raise ToolDefinitionError(
                         "MCP Header 凭据不允许使用明文，必须配置 secret_ref"
                     )
@@ -143,10 +144,11 @@ class LangChainMcpToolProvider:
         if environment is not None:
             if not isinstance(environment, Mapping):
                 raise ToolDefinitionError("MCP env 配置必须是对象")
-            if any(not cls._is_secret_ref(value) for value in environment.values()):
-                raise ToolDefinitionError(
-                    "MCP 环境变量不允许使用明文，必须配置 secret_ref"
-                )
+            for name, value in environment.items():
+                if cls._is_sensitive_name(name) and not cls._is_secret_ref(value):
+                    raise ToolDefinitionError(
+                        "MCP 环境变量凭据不允许使用明文，必须配置 secret_ref"
+                    )
 
         cls._validate_nested_sensitive_values(server_config)
 
@@ -155,20 +157,8 @@ class LangChainMcpToolProvider:
         if cls._is_secret_ref(value):
             return
         if isinstance(value, Mapping):
-            sensitive_markers = (
-                "api-key",
-                "api_key",
-                "authorization",
-                "credential",
-                "password",
-                "secret",
-                "token",
-            )
             for key, item in value.items():
-                normalized_key = str(key).casefold()
-                if any(
-                    marker in normalized_key for marker in sensitive_markers
-                ) and not cls._is_secret_ref(item):
+                if cls._is_sensitive_name(key) and not cls._is_secret_ref(item):
                     raise ToolDefinitionError(
                         "MCP 敏感配置不允许使用明文，必须配置 secret_ref"
                     )
@@ -184,6 +174,23 @@ class LangChainMcpToolProvider:
             and set(value) == {"secret_ref"}
             and isinstance(value.get("secret_ref"), str)
             and bool(value["secret_ref"].strip())
+        )
+
+    @staticmethod
+    def _is_sensitive_name(value: Any) -> bool:
+        normalized = str(value).casefold()
+        return any(
+            marker in normalized
+            for marker in (
+                "api-key",
+                "api_key",
+                "authorization",
+                "cookie",
+                "credential",
+                "password",
+                "secret",
+                "token",
+            )
         )
 
     async def _resolve_value(self, value: Any, context: CompileContext) -> Any:
