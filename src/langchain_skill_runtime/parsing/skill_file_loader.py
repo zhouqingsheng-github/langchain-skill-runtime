@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from jsonschema.exceptions import SchemaError  # type: ignore[import-untyped]
 from pydantic import ValidationError
 
 from langchain_skill_runtime.errors import (
@@ -14,13 +16,19 @@ from langchain_skill_runtime.errors import (
 from langchain_skill_runtime.models.skill import SkillDocument
 from langchain_skill_runtime.models.tool import ResolvedToolDefinition, ToolType
 from langchain_skill_runtime.parsing.skill_parser import SkillParser
+from langchain_skill_runtime.schemas.json_schema import JsonSchemaModelFactory
 
 
 class SkillFileLoader:
     """Read UTF-8 SKILL.md files and normalize their Tool declarations."""
 
-    def __init__(self, parser: SkillParser | None = None) -> None:
+    def __init__(
+        self,
+        parser: SkillParser | None = None,
+        schema_factory: JsonSchemaModelFactory | None = None,
+    ) -> None:
         self._parser = parser or SkillParser()
+        self._schema_factory = schema_factory or JsonSchemaModelFactory()
 
     def load(self, path: str | Path) -> SkillDocument:
         skill_path = Path(path)
@@ -82,7 +90,10 @@ class SkillFileLoader:
                 source_root,
             )
         elif tool_type is ToolType.MCP:
-            self._validate_mcp_credentials(execution_config)
+            self._validate_file_mcp_execution(execution_config)
+
+        self._validate_schemas(name, input_schema, output_schema)
+        self._validate_execution_config(tool_type, execution_config)
 
         try:
             return ResolvedToolDefinition(
@@ -124,35 +135,50 @@ class SkillFileLoader:
         return {**execution, "artifact_id": str(resolved_entry)}
 
     @staticmethod
-    def _validate_mcp_credentials(execution: Mapping[str, Any]) -> None:
-        server = execution.get("server")
-        if not isinstance(server, Mapping):
-            return
-        headers = server.get("headers")
-        if headers is None:
-            return
-        if not isinstance(headers, Mapping):
-            raise ToolDefinitionError("SKILL.md MCP headers 必须是对象")
+    def _validate_file_mcp_execution(execution: Mapping[str, Any]) -> None:
+        if "server" in execution:
+            raise ToolDefinitionError(
+                "SKILL.md MCP Tool 只能使用宿主预注册的 server_ref"
+            )
+        server_ref = execution.get("server_ref")
+        if not isinstance(server_ref, str) or not server_ref.strip():
+            raise ToolDefinitionError("SKILL.md MCP Tool 必须配置 server_ref")
 
-        sensitive_headers = {
-            "api-key",
-            "authorization",
-            "cookie",
-            "proxy-authorization",
-            "x-api-key",
-            "x-auth-token",
+    def _validate_schemas(
+        self,
+        name: str,
+        input_schema: dict[str, Any],
+        output_schema: dict[str, Any] | None,
+    ) -> None:
+        self._schema_factory.create(
+            f"{name.title().replace('_', '')}Input",
+            input_schema,
+        )
+        if output_schema is None:
+            return
+        try:
+            Draft202012Validator.check_schema(output_schema)
+        except SchemaError:
+            raise ToolDefinitionError(
+                "Tool output_schema 不是合法 JSON Schema"
+            ) from None
+
+    @staticmethod
+    def _validate_execution_config(
+        tool_type: ToolType,
+        execution: Mapping[str, Any],
+    ) -> None:
+        required_keys: dict[ToolType, tuple[str, ...]] = {
+            ToolType.PYTHON_FUNCTION: ("registry_key",),
+            ToolType.SERVER_SCRIPT: ("artifact_id",),
+            ToolType.CLIENT_JAVASCRIPT: ("tool_key",),
+            ToolType.MCP: ("server_name", "tool_name", "server_ref"),
         }
-        for name, value in headers.items():
-            if str(name).casefold() not in sensitive_headers:
-                continue
-            if not (
-                isinstance(value, Mapping)
-                and set(value) == {"secret_ref"}
-                and isinstance(value.get("secret_ref"), str)
-                and value["secret_ref"].strip()
-            ):
+        for key in required_keys[tool_type]:
+            value = execution.get(key)
+            if not isinstance(value, str) or not value.strip():
                 raise ToolDefinitionError(
-                    "SKILL.md MCP 敏感 Header 必须使用 secret_ref"
+                    f"SKILL.md {tool_type.value} Tool 必须配置 {key}"
                 )
 
     @staticmethod

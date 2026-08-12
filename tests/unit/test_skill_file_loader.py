@@ -140,11 +140,11 @@ tools:
         SkillFileLoader().load(skill_path)
 
 
-def test_file_loader_rejects_plaintext_mcp_credentials(tmp_path: Path) -> None:
+def test_file_loader_accepts_registered_mcp_server_reference(tmp_path: Path) -> None:
     skill_path = write_skill(
         tmp_path,
-        """name: unsafe-mcp
-description: 包含明文凭据的 MCP 工具
+        """name: safe-mcp
+description: 引用宿主预注册 MCP 服务
 tools:
   - name: query_hotel
     description: 查询酒店数据
@@ -155,12 +155,130 @@ tools:
     execution:
       server_name: hotel
       tool_name: query_hotel
-      server:
+      server_ref: mcp/hotel""",
+    )
+
+    document = SkillFileLoader().load(skill_path)
+
+    assert document.tools[0].execution_config == {
+        "server_name": "hotel",
+        "tool_name": "query_hotel",
+        "server_ref": "mcp/hotel",
+    }
+
+
+@pytest.mark.parametrize(
+    "server_config",
+    [
+        """server:
+        transport: stdio
+        command: /bin/sh
+        args: [-c, whoami]""",
+        """server:
         transport: http
         url: https://mcp.example.com/mcp
         headers:
           Authorization: Bearer plaintext-token""",
+        """server:
+        transport: stdio
+        command: python
+        env:
+          API_KEY: plaintext-token""",
+    ],
+)
+def test_file_loader_rejects_inline_mcp_server_configuration(
+    tmp_path: Path,
+    server_config: str,
+) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        f"""name: unsafe-mcp
+description: 包含未审核 MCP 服务配置
+tools:
+  - name: query_hotel
+    description: 查询酒店数据
+    type: MCP
+    input_schema:
+      type: object
+      properties: {{}}
+    execution:
+      server_name: hotel
+      tool_name: query_hotel
+      {server_config}""",
     )
 
-    with pytest.raises(ToolDefinitionError, match="secret_ref"):
+    with pytest.raises(ToolDefinitionError, match="server_ref"):
+        SkillFileLoader().load(skill_path)
+
+
+@pytest.mark.parametrize(
+    ("tool_type", "execution", "error_pattern"),
+    [
+        ("PYTHON_FUNCTION", "{}", "registry_key"),
+        ("CLIENT_JAVASCRIPT", "{}", "tool_key"),
+        ("MCP", "{server_name: hotel, tool_name: query_hotel}", "server_ref"),
+    ],
+)
+def test_file_loader_rejects_missing_execution_configuration(
+    tmp_path: Path,
+    tool_type: str,
+    execution: str,
+    error_pattern: str,
+) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        f"""name: invalid-execution
+description: 缺少执行配置
+tools:
+  - name: invalid_tool
+    description: 非法工具
+    type: {tool_type}
+    input_schema:
+      type: object
+      properties: {{}}
+    execution: {execution}""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match=error_pattern):
+        SkillFileLoader().load(skill_path)
+
+
+def test_file_loader_rejects_invalid_input_schema(tmp_path: Path) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        """name: invalid-schema
+description: 非法输入 Schema
+tools:
+  - name: invalid_tool
+    description: 非法工具
+    type: PYTHON_FUNCTION
+    input_schema:
+      type: string
+    execution:
+      registry_key: invalid.tool""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match="input_schema"):
+        SkillFileLoader().load(skill_path)
+
+
+def test_file_loader_rejects_invalid_output_schema(tmp_path: Path) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        """name: invalid-output-schema
+description: 非法输出 Schema
+tools:
+  - name: invalid_tool
+    description: 非法工具
+    type: PYTHON_FUNCTION
+    input_schema:
+      type: object
+      properties: {}
+    output_schema:
+      type: not-a-json-schema-type
+    execution:
+      registry_key: invalid.tool""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match="output_schema"):
         SkillFileLoader().load(skill_path)

@@ -66,10 +66,7 @@ tools:
     execution:
       server_name: echo
       tool_name: mcp_echo
-      server:
-        transport: stdio
-        command: python
-        args: []
+      server_ref: demo.echo
 metadata:
   category: integration-test
 ---

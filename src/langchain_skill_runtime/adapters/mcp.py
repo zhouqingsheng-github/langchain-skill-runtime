@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast
+from urllib.parse import urlsplit
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
@@ -30,6 +31,16 @@ class McpToolProvider(Protocol):
     ) -> BaseTool | None: ...
 
 
+class McpServerConfigProvider(Protocol):
+    """Resolve one host-approved MCP server configuration by reference."""
+
+    async def resolve(
+        self,
+        reference: str,
+        context: CompileContext,
+    ) -> Mapping[str, Any]: ...
+
+
 class _McpClient(Protocol):
     async def get_tools(self, *, server_name: str | None = None) -> list[BaseTool]: ...
 
@@ -43,9 +54,11 @@ class LangChainMcpToolProvider:
     def __init__(
         self,
         secret_provider: SecretProvider | None = None,
+        server_config_provider: McpServerConfigProvider | None = None,
         client_factory: McpClientFactory | None = None,
     ) -> None:
         self._secret_provider = secret_provider
+        self._server_config_provider = server_config_provider
         self._client_factory = client_factory or self._default_client_factory
 
     async def get_tool(
@@ -55,8 +68,10 @@ class LangChainMcpToolProvider:
         server_config: Mapping[str, Any],
         context: CompileContext,
     ) -> BaseTool | None:
+        trusted_config = await self._resolve_server_config(server_config, context)
+        self._validate_secret_references(trusted_config)
         try:
-            resolved = await self._resolve_value(dict(server_config), context)
+            resolved = await self._resolve_value(trusted_config, context)
         except ToolDefinitionError:
             raise
         except Exception:  # noqa: BLE001 - sanitize SecretProvider failures
@@ -70,6 +85,106 @@ class LangChainMcpToolProvider:
         except Exception:  # noqa: BLE001 - sanitize arbitrary MCP client failures
             raise ToolUnavailableError("MCP 工具发现失败") from None
         return next((item for item in tools if item.name == tool_name), None)
+
+    async def _resolve_server_config(
+        self,
+        server_config: Mapping[str, Any],
+        context: CompileContext,
+    ) -> dict[str, Any]:
+        if "server_ref" not in server_config:
+            return dict(server_config)
+        if set(server_config) != {"server_ref"}:
+            raise ToolDefinitionError("MCP server_ref 配置不能包含其他字段")
+
+        reference = server_config.get("server_ref")
+        if not isinstance(reference, str) or not reference.strip():
+            raise ToolDefinitionError("MCP server_ref 不能为空")
+        if self._server_config_provider is None:
+            raise ToolDefinitionError("MCP server_ref 缺少 McpServerConfigProvider")
+        try:
+            resolved = await self._server_config_provider.resolve(reference, context)
+        except Exception:  # noqa: BLE001 - sanitize external provider failures
+            raise ToolUnavailableError("MCP Server 配置解析失败") from None
+        if not isinstance(resolved, Mapping):
+            raise ToolDefinitionError("MCP Server 配置必须是对象")
+        return dict(resolved)
+
+    @classmethod
+    def _validate_secret_references(cls, server_config: Mapping[str, Any]) -> None:
+        url = server_config.get("url")
+        if url is not None and not cls._is_secret_ref(url):
+            if not isinstance(url, str):
+                raise ToolDefinitionError("MCP URL 配置非法")
+            parsed = urlsplit(url)
+            if parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ToolDefinitionError("MCP URL 不允许包含明文凭据或查询参数")
+
+        headers = server_config.get("headers")
+        if headers is not None:
+            if not isinstance(headers, Mapping):
+                raise ToolDefinitionError("MCP headers 配置必须是对象")
+            safe_literal_headers = {
+                "accept",
+                "accept-encoding",
+                "content-type",
+                "user-agent",
+            }
+            for name, value in headers.items():
+                if str(name).casefold() in safe_literal_headers and isinstance(
+                    value, str
+                ):
+                    continue
+                if not cls._is_secret_ref(value):
+                    raise ToolDefinitionError(
+                        "MCP Header 凭据不允许使用明文，必须配置 secret_ref"
+                    )
+
+        environment = server_config.get("env")
+        if environment is not None:
+            if not isinstance(environment, Mapping):
+                raise ToolDefinitionError("MCP env 配置必须是对象")
+            if any(not cls._is_secret_ref(value) for value in environment.values()):
+                raise ToolDefinitionError(
+                    "MCP 环境变量不允许使用明文，必须配置 secret_ref"
+                )
+
+        cls._validate_nested_sensitive_values(server_config)
+
+    @classmethod
+    def _validate_nested_sensitive_values(cls, value: Any) -> None:
+        if cls._is_secret_ref(value):
+            return
+        if isinstance(value, Mapping):
+            sensitive_markers = (
+                "api-key",
+                "api_key",
+                "authorization",
+                "credential",
+                "password",
+                "secret",
+                "token",
+            )
+            for key, item in value.items():
+                normalized_key = str(key).casefold()
+                if any(
+                    marker in normalized_key for marker in sensitive_markers
+                ) and not cls._is_secret_ref(item):
+                    raise ToolDefinitionError(
+                        "MCP 敏感配置不允许使用明文，必须配置 secret_ref"
+                    )
+                cls._validate_nested_sensitive_values(item)
+        elif isinstance(value, list):
+            for item in value:
+                cls._validate_nested_sensitive_values(item)
+
+    @staticmethod
+    def _is_secret_ref(value: Any) -> bool:
+        return (
+            isinstance(value, Mapping)
+            and set(value) == {"secret_ref"}
+            and isinstance(value.get("secret_ref"), str)
+            and bool(value["secret_ref"].strip())
+        )
 
     async def _resolve_value(self, value: Any, context: CompileContext) -> Any:
         if isinstance(value, Mapping):
@@ -128,17 +243,26 @@ class McpToolAdapter:
         server_name = definition.execution_config.get("server_name")
         tool_name = definition.execution_config.get("tool_name")
         server = definition.execution_config.get("server")
+        server_ref = definition.execution_config.get("server_ref")
         if not isinstance(server_name, str) or not server_name.strip():
             raise ToolDefinitionError("MCP Tool 必须配置 server_name")
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise ToolDefinitionError("MCP Tool 必须配置 tool_name")
-        if not isinstance(server, Mapping):
-            raise ToolDefinitionError("MCP Tool 必须配置 server 对象")
+        if server is not None and server_ref is not None:
+            raise ToolDefinitionError("MCP Tool 不能同时配置 server 和 server_ref")
+        if server_ref is not None:
+            if not isinstance(server_ref, str) or not server_ref.strip():
+                raise ToolDefinitionError("MCP Tool server_ref 不能为空")
+            server_config: Mapping[str, Any] = {"server_ref": server_ref}
+        elif isinstance(server, Mapping):
+            server_config = server
+        else:
+            raise ToolDefinitionError("MCP Tool 必须配置 server 或 server_ref")
 
         discovered = await self._provider.get_tool(
             server_name,
             tool_name,
-            server,
+            server_config,
             context,
         )
         if discovered is None:

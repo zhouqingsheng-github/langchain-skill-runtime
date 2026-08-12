@@ -95,6 +95,23 @@ class FakeSecretProvider:
         return "secret-token-value"
 
 
+class FakeServerConfigProvider:
+    async def resolve(
+        self,
+        reference: str,
+        context: CompileContext,
+    ) -> Mapping[str, Any]:
+        assert reference == "mcp/echo"
+        assert context.tenant_id == "tenant-1"
+        return {
+            "transport": "http",
+            "url": "https://example.invalid/mcp",
+            "headers": {
+                "Authorization": {"secret_ref": "mcp/test/token"},
+            },
+        }
+
+
 class FakeMcpClient:
     async def get_tools(self, *, server_name: str | None = None) -> list[BaseTool]:
         assert server_name == "echo"
@@ -148,6 +165,56 @@ async def test_langchain_provider_resolves_secret_references() -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_langchain_provider_resolves_registered_server_reference() -> None:
+    created_connections: list[dict[str, Mapping[str, Any]]] = []
+
+    def client_factory(
+        connections: dict[str, Mapping[str, Any]],
+    ) -> FakeMcpClient:
+        created_connections.append(connections)
+        return FakeMcpClient()
+
+    provider = LangChainMcpToolProvider(
+        secret_provider=FakeSecretProvider(),
+        server_config_provider=FakeServerConfigProvider(),
+        client_factory=client_factory,
+    )
+
+    built = await provider.get_tool(
+        "echo",
+        "mcp_echo",
+        {"server_ref": "mcp/echo"},
+        CompileContext(tenant_id="tenant-1"),
+    )
+
+    assert built is mcp_echo
+    assert created_connections == [
+        {
+            "echo": {
+                "transport": "http",
+                "url": "https://example.invalid/mcp",
+                "headers": {"Authorization": "secret-token-value"},
+            }
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_langchain_provider_requires_server_config_provider_for_reference() -> (
+    None
+):
+    provider = LangChainMcpToolProvider()
+
+    with pytest.raises(ToolDefinitionError, match="McpServerConfigProvider"):
+        await provider.get_tool(
+            "echo",
+            "mcp_echo",
+            {"server_ref": "mcp/echo"},
+            CompileContext(),
+        )
+
+
 class FailingSecretProvider:
     async def resolve(self, reference: str, context: CompileContext) -> str:
         del reference, context
@@ -158,6 +225,73 @@ class DefinitionFailingSecretProvider:
     async def resolve(self, reference: str, context: CompileContext) -> str:
         del reference, context
         raise ToolDefinitionError("resolved-secret-token /internal/secret/path")
+
+
+class FailingServerConfigProvider:
+    async def resolve(
+        self,
+        reference: str,
+        context: CompileContext,
+    ) -> Mapping[str, Any]:
+        del reference, context
+        raise RuntimeError("resolved-secret-token /internal/server/path")
+
+
+@pytest.mark.asyncio
+async def test_langchain_provider_sanitizes_server_config_provider_failure() -> None:
+    provider = LangChainMcpToolProvider(
+        server_config_provider=FailingServerConfigProvider()
+    )
+
+    with pytest.raises(ToolUnavailableError) as captured:
+        await provider.get_tool(
+            "echo",
+            "mcp_echo",
+            {"server_ref": "mcp/echo"},
+            CompileContext(),
+        )
+
+    error_text = str(captured.value)
+    assert "resolved-secret-token" not in error_text
+    assert "/internal/server/path" not in error_text
+
+
+@pytest.mark.parametrize(
+    "server_config",
+    [
+        {
+            "transport": "http",
+            "url": "https://example.invalid/mcp",
+            "headers": {"Authorization": "Bearer plaintext-token"},
+        },
+        {
+            "transport": "stdio",
+            "command": "python",
+            "env": {"API_KEY": "plaintext-token"},
+        },
+        {
+            "transport": "http",
+            "url": "https://user:plaintext-token@example.invalid/mcp",
+        },
+        {
+            "transport": "http",
+            "url": "https://example.invalid/mcp?token=plaintext-token",
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_langchain_provider_rejects_plaintext_credentials(
+    server_config: Mapping[str, Any],
+) -> None:
+    provider = LangChainMcpToolProvider()
+
+    with pytest.raises(ToolDefinitionError, match="明文"):
+        await provider.get_tool(
+            "echo",
+            "mcp_echo",
+            server_config,
+            CompileContext(),
+        )
 
 
 @pytest.mark.asyncio
