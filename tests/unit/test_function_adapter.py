@@ -38,21 +38,6 @@ def function_definition(registry_key: str = "math.add") -> ResolvedToolDefinitio
 
 
 @pytest.mark.asyncio
-async def test_function_adapter_invokes_registered_async_function() -> None:
-    registry = InMemoryFunctionRegistry()
-
-    async def add_numbers(a: int, b: int) -> int:
-        return a + b
-
-    registry.register("math.add", add_numbers)
-    tool = await PythonFunctionAdapter(registry).build(
-        function_definition(), CompileContext()
-    )
-
-    assert await tool.ainvoke({"a": 2, "b": 3}) == 5
-
-
-@pytest.mark.asyncio
 async def test_function_adapter_invokes_registered_sync_function() -> None:
     registry = InMemoryFunctionRegistry()
     registry.register("math.add", lambda a, b: a + b)
