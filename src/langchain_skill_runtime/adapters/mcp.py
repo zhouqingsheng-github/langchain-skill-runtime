@@ -178,12 +178,13 @@ class LangChainMcpToolProvider:
 
     @staticmethod
     def _is_sensitive_name(value: Any) -> bool:
-        normalized = str(value).casefold()
+        normalized = "".join(
+            character for character in str(value).casefold() if character.isalnum()
+        )
         return any(
             marker in normalized
             for marker in (
-                "api-key",
-                "api_key",
+                "apikey",
                 "authorization",
                 "cookie",
                 "credential",

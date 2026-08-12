@@ -302,6 +302,20 @@ async def test_langchain_provider_sanitizes_server_config_provider_failure() -> 
             "transport": "http",
             "url": "https://example.invalid/mcp?token=plaintext-token",
         },
+        {
+            "transport": "http",
+            "url": "https://example.invalid/mcp",
+            "headers": {"X-ApiKey": "plaintext-token"},
+        },
+        {
+            "transport": "stdio",
+            "command": "python",
+            "env": {"APIKEY": "plaintext-token"},
+        },
+        {
+            "transport": "http",
+            "url": "https://example.invalid/mcp?apikey=plaintext-token",
+        },
     ],
 )
 @pytest.mark.asyncio
