@@ -52,11 +52,14 @@ class SkillParser:
             raise SkillParseError("SKILL.md compatibility 必须是字符串")
 
         return ParsedSkill(
+            id=self._optional_text(frontmatter, "id"),
             name=name,
             description=description,
+            version=self._optional_text(frontmatter, "version") or "0.0.0",
             instructions=instructions,
             compatibility=compatibility,
-            allowed_tools=self._allowed_tools(frontmatter.get("allowed-tools", ())),
+            allowed_tools=self._allowed_tools(frontmatter.get("allowed-tools")),
+            tool_declarations=self._tool_declarations(frontmatter.get("tools")),
             metadata=dict(metadata),
         )
 
@@ -68,6 +71,15 @@ class SkillParser:
         return value.strip()
 
     @staticmethod
+    def _optional_text(frontmatter: Mapping[str, Any], key: str) -> str | None:
+        value = frontmatter.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise SkillParseError(f"SKILL.md Frontmatter 的 {key} 必须是非空字符串")
+        return value.strip()
+
+    @staticmethod
     def _allowed_tools(value: Any) -> tuple[str, ...]:
         if value is None:
             return ()
@@ -76,3 +88,13 @@ class SkillParser:
         if isinstance(value, list) and all(isinstance(item, str) for item in value):
             return tuple(item.strip() for item in value if item.strip())
         raise SkillParseError("SKILL.md allowed-tools 必须是字符串或字符串列表")
+
+    @staticmethod
+    def _tool_declarations(value: Any) -> tuple[dict[str, Any], ...]:
+        if value is None:
+            return ()
+        if not isinstance(value, list) or not all(
+            isinstance(item, Mapping) for item in value
+        ):
+            raise SkillParseError("SKILL.md tools 必须是对象列表")
+        return tuple(dict(item) for item in value)

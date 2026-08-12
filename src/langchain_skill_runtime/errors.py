@@ -17,6 +17,14 @@ class SkillParseError(SkillRuntimeError):
     """The SKILL.md content is invalid."""
 
 
+class SkillFileNotFoundError(SkillRuntimeError):
+    """The requested SKILL.md file does not exist."""
+
+
+class SkillReadError(SkillRuntimeError):
+    """The requested SKILL.md file cannot be read safely."""
+
+
 class ToolDefinitionError(SkillRuntimeError):
     """A Tool definition or input schema is invalid."""
 
