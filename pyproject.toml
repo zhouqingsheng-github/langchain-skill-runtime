@@ -1,7 +1,7 @@
 [project]
 name = "langchain-skill-runtime"
-version = "0.1.0"
-description = "Compile database-backed SKILL.md definitions and heterogeneous tools for LangChain agents"
+version = "0.2.0"
+description = "Compile SKILL.md files or structured Skill objects into heterogeneous LangChain tools"
 readme = "doc/项目说明.md"
 requires-python = ">=3.11"
 classifiers = [

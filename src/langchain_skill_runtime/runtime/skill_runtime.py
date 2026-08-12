@@ -34,7 +34,7 @@ from langchain_skill_runtime.repositories.tool_repository import ToolRepository
 class SkillRuntime:
     """Coordinate repository reads, parsing, Tool builds and Prompt compilation."""
 
-    POLICY_VERSION = "1"
+    POLICY_VERSION = "2"
 
     def __init__(
         self,

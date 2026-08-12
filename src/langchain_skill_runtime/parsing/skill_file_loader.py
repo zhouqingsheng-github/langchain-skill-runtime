@@ -81,6 +81,8 @@ class SkillFileLoader:
                 execution_config,
                 source_root,
             )
+        elif tool_type is ToolType.MCP:
+            self._validate_mcp_credentials(execution_config)
 
         try:
             return ResolvedToolDefinition(
@@ -120,6 +122,38 @@ class SkillFileLoader:
                 "SKILL.md 脚本路径必须位于 Skill 根目录"
             ) from None
         return {**execution, "artifact_id": str(resolved_entry)}
+
+    @staticmethod
+    def _validate_mcp_credentials(execution: Mapping[str, Any]) -> None:
+        server = execution.get("server")
+        if not isinstance(server, Mapping):
+            return
+        headers = server.get("headers")
+        if headers is None:
+            return
+        if not isinstance(headers, Mapping):
+            raise ToolDefinitionError("SKILL.md MCP headers 必须是对象")
+
+        sensitive_headers = {
+            "api-key",
+            "authorization",
+            "cookie",
+            "proxy-authorization",
+            "x-api-key",
+            "x-auth-token",
+        }
+        for name, value in headers.items():
+            if str(name).casefold() not in sensitive_headers:
+                continue
+            if not (
+                isinstance(value, Mapping)
+                and set(value) == {"secret_ref"}
+                and isinstance(value.get("secret_ref"), str)
+                and value["secret_ref"].strip()
+            ):
+                raise ToolDefinitionError(
+                    "SKILL.md MCP 敏感 Header 必须使用 secret_ref"
+                )
 
     @staticmethod
     def _required_text(raw: Mapping[str, Any], key: str) -> str:

@@ -138,3 +138,29 @@ tools:
 
     with pytest.raises(ToolDefinitionError, match="Tool 类型"):
         SkillFileLoader().load(skill_path)
+
+
+def test_file_loader_rejects_plaintext_mcp_credentials(tmp_path: Path) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        """name: unsafe-mcp
+description: 包含明文凭据的 MCP 工具
+tools:
+  - name: query_hotel
+    description: 查询酒店数据
+    type: MCP
+    input_schema:
+      type: object
+      properties: {}
+    execution:
+      server_name: hotel
+      tool_name: query_hotel
+      server:
+        transport: http
+        url: https://mcp.example.com/mcp
+        headers:
+          Authorization: Bearer plaintext-token""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match="secret_ref"):
+        SkillFileLoader().load(skill_path)
