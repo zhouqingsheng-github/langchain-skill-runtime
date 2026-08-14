@@ -1,6 +1,6 @@
 """Common Tool adapter contract."""
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from langchain_core.tools import BaseTool
 
@@ -19,3 +19,14 @@ class ToolAdapter(Protocol):
         definition: ResolvedToolDefinition,
         context: CompileContext,
     ) -> BaseTool: ...
+
+
+@runtime_checkable
+class ToolCollectionAdapter(Protocol):
+    """Optional adapter capability that expands one definition into many tools."""
+
+    async def build_many(
+        self,
+        definition: ResolvedToolDefinition,
+        context: CompileContext,
+    ) -> tuple[BaseTool, ...]: ...

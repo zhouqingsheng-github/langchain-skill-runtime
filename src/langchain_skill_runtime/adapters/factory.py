@@ -4,7 +4,7 @@ from collections.abc import Iterable
 
 from langchain_core.tools import BaseTool
 
-from langchain_skill_runtime.adapters.base import ToolAdapter
+from langchain_skill_runtime.adapters.base import ToolAdapter, ToolCollectionAdapter
 from langchain_skill_runtime.errors import (
     DuplicateToolAdapterError,
     ToolAdapterNotFoundError,
@@ -39,3 +39,19 @@ class ToolFactory:
                 f"未注册 ToolAdapter: {definition.tool_type.value}"
             )
         return await adapter.build(definition, context)
+
+    async def build_many(
+        self,
+        definition: ResolvedToolDefinition,
+        context: CompileContext,
+    ) -> tuple[BaseTool, ...]:
+        """Build one ordinary tool or expand one collection definition."""
+
+        adapter = self._adapters.get(definition.tool_type)
+        if adapter is None:
+            raise ToolAdapterNotFoundError(
+                f"未注册 ToolAdapter: {definition.tool_type.value}"
+            )
+        if isinstance(adapter, ToolCollectionAdapter):
+            return await adapter.build_many(definition, context)
+        return (await adapter.build(definition, context),)

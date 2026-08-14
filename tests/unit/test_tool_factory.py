@@ -63,6 +63,19 @@ async def test_factory_dispatches_matching_adapter() -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_factory_wraps_single_tool_adapter_result_as_collection() -> None:
+    factory = ToolFactory([FakeAdapter()])
+
+    built = await factory.build_many(definition(), CompileContext())
+
+    assert len(built) == 1
+    assert await built[0].ainvoke({"value": "ok"}) == {
+        "tool": "test_tool",
+        "value": "ok",
+    }
+
+
 def test_factory_rejects_duplicate_adapter_type() -> None:
     with pytest.raises(DuplicateToolAdapterError):
         ToolFactory([FakeAdapter(), FakeAdapter()])

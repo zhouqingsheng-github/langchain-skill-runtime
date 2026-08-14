@@ -33,12 +33,13 @@ from langchain_skill_runtime.client import (
     PendingClientToolTransport,
 )
 from langchain_skill_runtime.executors import InMemoryFunctionRegistry
+from langchain_skill_runtime.repositories import SkillRepository
 
 TESTS_DIR = Path(__file__).resolve().parents[1]
 SKILL_PATH = TESTS_DIR / "fixtures/skills/heterogeneous-tools/SKILL.md"
 
 
-class MemorySkillRepository:
+class MemorySkillRepository(SkillRepository):
     """模拟业务系统从数据库读取 Skill 对象。"""
 
     def __init__(self, skill: SkillDefinition) -> None:
@@ -251,6 +252,7 @@ async def test_complete_library_usage() -> None:
     # 用法二：把数据库查询结果映射成对象后直接编译，核心库不连接数据库。
     skill_object = database_skill_object()
     tool_objects = database_tool_objects()
+
     object_runtime = SkillRuntime(tool_factory=tool_factory)
     object_bundle = await object_runtime.compile_objects(
         skill=skill_object,
@@ -264,11 +266,11 @@ async def test_complete_library_usage() -> None:
         tool_repository=MemoryToolRepository(tool_objects),
         tool_factory=tool_factory,
     )
+
     repository_bundle = await repository_runtime.compile(
         "heterogeneous-skill",
         context,
     )
-
     # 三种来源最终进入同一编译核心，因此得到相同的 Tool 列表和系统提示词。
     expected_names = [
         "add_numbers",

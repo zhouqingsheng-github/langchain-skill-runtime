@@ -13,6 +13,8 @@ from langchain_skill_runtime.errors import (
     SkillNotFoundError,
     SkillRuntimeConfigurationError,
     ToolBuildError,
+    ToolDefinitionError,
+    ToolUnavailableError,
 )
 from langchain_skill_runtime.models.context import CompileContext
 from langchain_skill_runtime.models.skill import SkillDefinition
@@ -87,6 +89,59 @@ class RuntimeTestAdapter:
         )
 
 
+class ControlledFailureAdapter:
+    tool_type = ToolType.PYTHON_FUNCTION
+
+    def __init__(self, error: ToolDefinitionError | ToolUnavailableError) -> None:
+        self._error = error
+
+    async def build(
+        self,
+        definition: ResolvedToolDefinition,
+        context: CompileContext,
+    ) -> BaseTool:
+        del definition, context
+        raise self._error
+
+
+class ExpandingMcpAdapter:
+    tool_type = ToolType.MCP
+
+    async def build(
+        self,
+        definition: ResolvedToolDefinition,
+        context: CompileContext,
+    ) -> BaseTool:
+        del definition, context
+        raise AssertionError("集合型 MCP 不应走单工具 build")
+
+    async def build_many(
+        self,
+        definition: ResolvedToolDefinition,
+        context: CompileContext,
+    ) -> tuple[BaseTool, ...]:
+        del context
+
+        async def geo(address: str) -> str:
+            return f"location:{address}"
+
+        async def route(origin: str, destination: str) -> str:
+            return f"route:{origin}:{destination}"
+
+        return (
+            StructuredTool.from_function(
+                coroutine=geo,
+                name="maps_geo",
+                description="地址解析",
+            ),
+            StructuredTool.from_function(
+                coroutine=route,
+                name="maps_direction_driving",
+                description="驾车路线规划",
+            ),
+        )
+
+
 def skill(*, enabled: bool = True, version: str = "1.0.0") -> SkillDefinition:
     return SkillDefinition(
         id="skill-1",
@@ -146,6 +201,33 @@ async def test_runtime_stops_when_required_tool_fails() -> None:
         await runtime(skill(), [required_failure]).compile("skill-1", CompileContext())
 
     assert "internal failure detail" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    "controlled_error",
+    [
+        ToolUnavailableError("MCP Server 地址解析失败"),
+        ToolDefinitionError("内联 MCP Server 必须配置宿主 McpUrlPolicy"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_runtime_reports_controlled_tool_failure_reason(
+    controlled_error: ToolDefinitionError | ToolUnavailableError,
+) -> None:
+    controlled_runtime = SkillRuntime(
+        skill_repository=MemorySkillRepository(skill()),
+        tool_repository=MemoryToolRepository(
+            [tool_definition("successful_tool", fail=True)]
+        ),
+        tool_factory=ToolFactory([ControlledFailureAdapter(controlled_error)]),
+    )
+
+    with pytest.raises(SkillCompileError) as captured:
+        await controlled_runtime.compile("skill-1", CompileContext())
+
+    assert str(captured.value) == (
+        f"必需 Tool 构建失败: successful_tool；原因：{controlled_error}"
+    )
 
 
 @pytest.mark.asyncio
@@ -239,6 +321,89 @@ async def test_runtime_compiles_skill_and_tool_objects_without_repositories() ->
     assert bundle.skill_id == "skill-1"
     assert [item.name for item in bundle.tools] == ["successful_tool"]
     assert bundle.name == "database-name"
+
+
+@pytest.mark.asyncio
+async def test_runtime_expands_one_mcp_definition_into_discovered_tools() -> None:
+    mcp_definition = ResolvedToolDefinition(
+        id="amap-maps",
+        name="amap_maps",
+        description="高德地图 MCP 工具集合",
+        tool_type=ToolType.MCP,
+        input_schema={"type": "object", "properties": {}},
+        execution_config={"server_name": "amap", "server": {}},
+        version="1.0.0",
+    )
+    object_runtime = SkillRuntime(
+        tool_factory=ToolFactory([ExpandingMcpAdapter()]),
+    )
+
+    bundle = await object_runtime.compile_objects(
+        skill=skill(),
+        tools=[mcp_definition],
+        context=CompileContext(),
+    )
+
+    assert [item.name for item in bundle.tools] == [
+        "maps_geo",
+        "maps_direction_driving",
+    ]
+    assert "maps_geo: 地址解析" in bundle.system_prompt
+    assert "maps_direction_driving: 驾车路线规划" in bundle.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_collection_semantics_for_one_same_named_tool() -> None:
+    class OneToolMcpAdapter:
+        tool_type = ToolType.MCP
+
+        async def build(
+            self,
+            definition: ResolvedToolDefinition,
+            context: CompileContext,
+        ) -> BaseTool:
+            del definition, context
+            raise AssertionError("集合型 MCP 不应走单工具 build")
+
+        async def build_many(
+            self,
+            definition: ResolvedToolDefinition,
+            context: CompileContext,
+        ) -> tuple[BaseTool, ...]:
+            del definition, context
+
+            async def invoke(value: str) -> str:
+                return value
+
+            return (
+                StructuredTool.from_function(
+                    coroutine=invoke,
+                    name="amap_maps",
+                    description="远端真实工具说明",
+                ),
+            )
+
+    definition = ResolvedToolDefinition(
+        id="amap-maps",
+        name="amap_maps",
+        description="集合对象说明",
+        tool_type=ToolType.MCP,
+        input_schema={"type": "object", "properties": {}},
+        execution_config={"server_name": "amap", "server": {}},
+        version="1.0.0",
+    )
+    object_runtime = SkillRuntime(
+        tool_factory=ToolFactory([OneToolMcpAdapter()]),
+    )
+
+    bundle = await object_runtime.compile_objects(
+        skill=skill(),
+        tools=[definition],
+        context=CompileContext(),
+    )
+
+    assert "amap_maps: 远端真实工具说明" in bundle.system_prompt
+    assert "集合对象说明" not in bundle.system_prompt
 
 
 @pytest.mark.asyncio

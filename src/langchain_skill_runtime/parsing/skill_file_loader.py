@@ -1,8 +1,10 @@
 """Load one SKILL.md file into the runtime's normalized document model."""
 
 from collections.abc import Mapping
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from jsonschema.exceptions import SchemaError  # type: ignore[import-untyped]
@@ -136,13 +138,110 @@ class SkillFileLoader:
 
     @staticmethod
     def _validate_file_mcp_execution(execution: Mapping[str, Any]) -> None:
-        if "server" in execution:
-            raise ToolDefinitionError(
-                "SKILL.md MCP Tool 只能使用宿主预注册的 server_ref"
-            )
+        has_tool_name = "tool_name" in execution
+        tool_name = execution.get("tool_name")
+        server = execution.get("server")
         server_ref = execution.get("server_ref")
-        if not isinstance(server_ref, str) or not server_ref.strip():
-            raise ToolDefinitionError("SKILL.md MCP Tool 必须配置 server_ref")
+        if has_tool_name:
+            if not isinstance(tool_name, str) or not tool_name.strip():
+                raise ToolDefinitionError("SKILL.md MCP Tool tool_name 不能为空")
+            if server is not None:
+                raise ToolDefinitionError(
+                    "SKILL.md 单个 MCP Tool 只能使用宿主预注册的 server_ref"
+                )
+            if not isinstance(server_ref, str) or not server_ref.strip():
+                raise ToolDefinitionError("SKILL.md MCP Tool 必须配置 server_ref")
+            return
+
+        if server is not None and server_ref is not None:
+            raise ToolDefinitionError("MCP 工具集合不能同时配置 server 和 server_ref")
+        if server_ref is not None:
+            if not isinstance(server_ref, str) or not server_ref.strip():
+                raise ToolDefinitionError("SKILL.md MCP Tool server_ref 不能为空")
+            return
+        if not isinstance(server, Mapping):
+            raise ToolDefinitionError(
+                "SKILL.md MCP 工具集合必须配置 server 或 server_ref"
+            )
+        SkillFileLoader._validate_inline_mcp_server(server)
+
+    @classmethod
+    def _validate_inline_mcp_server(cls, server: Mapping[str, Any]) -> None:
+        transport = server.get("transport")
+        if not isinstance(transport, str) or not transport.strip():
+            raise ToolDefinitionError("MCP Server 必须配置 transport")
+        if transport == "stdio":
+            raise ToolDefinitionError(
+                "SKILL.md 内联 stdio MCP 必须改用宿主预注册的 server_ref"
+            )
+        if transport not in {"sse", "streamable_http", "streamable-http", "http"}:
+            raise ToolDefinitionError("内联 MCP Server transport 不受支持")
+
+        url = server.get("url")
+        if not isinstance(url, str):
+            raise ToolDefinitionError("内联 MCP Server 必须配置公网 HTTPS URL")
+        parsed = urlsplit(url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ToolDefinitionError("内联 MCP Server 必须使用公网 HTTPS URL")
+        try:
+            address = ip_address(parsed.hostname)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            raise ToolDefinitionError("内联 MCP Server 必须使用公网 HTTPS URL")
+        if (
+            parsed.username
+            or parsed.password
+            or any(
+                cls._is_sensitive_name(name)
+                for name, _ in parse_qsl(parsed.query, keep_blank_values=True)
+            )
+        ):
+            raise ToolDefinitionError("MCP Server URL 不允许包含明文凭据")
+        cls._validate_inline_mcp_values(server)
+
+    @classmethod
+    def _validate_inline_mcp_values(cls, value: Any) -> None:
+        if cls._is_reference(value):
+            return
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if cls._is_sensitive_name(key) and not cls._is_reference(item):
+                    raise ToolDefinitionError(
+                        "MCP Server 敏感配置必须使用 env 或 secret_ref"
+                    )
+                cls._validate_inline_mcp_values(item)
+        elif isinstance(value, list):
+            for item in value:
+                cls._validate_inline_mcp_values(item)
+
+    @staticmethod
+    def _is_reference(value: Any) -> bool:
+        return (
+            isinstance(value, Mapping)
+            and len(value) == 1
+            and next(iter(value), None) in {"env", "secret_ref"}
+            and isinstance(next(iter(value.values()), None), str)
+            and bool(next(iter(value.values()), "").strip())
+        )
+
+    @staticmethod
+    def _is_sensitive_name(value: Any) -> bool:
+        normalized = "".join(
+            character for character in str(value).casefold() if character.isalnum()
+        )
+        return normalized == "key" or any(
+            marker in normalized
+            for marker in (
+                "apikey",
+                "authorization",
+                "cookie",
+                "credential",
+                "password",
+                "secret",
+                "token",
+            )
+        )
 
     def _validate_schemas(
         self,
@@ -172,7 +271,7 @@ class SkillFileLoader:
             ToolType.PYTHON_FUNCTION: ("registry_key",),
             ToolType.SERVER_SCRIPT: ("artifact_id",),
             ToolType.CLIENT_JAVASCRIPT: ("tool_key",),
-            ToolType.MCP: ("server_name", "tool_name", "server_ref"),
+            ToolType.MCP: ("server_name",),
         }
         for key in required_keys[tool_type]:
             value = execution.get(key)

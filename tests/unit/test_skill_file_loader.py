@@ -167,6 +167,210 @@ tools:
     }
 
 
+@pytest.mark.parametrize("tool_name", ["", None, 123])
+def test_file_loader_rejects_invalid_legacy_mcp_tool_name(
+    tmp_path: Path,
+    tool_name: object,
+) -> None:
+    rendered_tool_name = "null" if tool_name is None else repr(tool_name)
+    skill_path = write_skill(
+        tmp_path,
+        f"""name: invalid-mcp-tool-name
+description: 非法旧版 MCP Tool 名称
+tools:
+  - name: query_hotel
+    description: 查询酒店数据
+    type: MCP
+    input_schema:
+      type: object
+      properties: {{}}
+    execution:
+      server_name: hotel
+      tool_name: {rendered_tool_name}
+      server_ref: mcp/hotel""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match="tool_name"):
+        SkillFileLoader().load(skill_path)
+
+
+def test_file_loader_accepts_inline_mcp_tool_collection(tmp_path: Path) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        """name: amap-skill
+description: 高德 MCP 工具集合
+tools:
+  - name: amap_maps
+    description: 高德地图 MCP 提供的全部工具
+    type: MCP
+    input_schema:
+      type: object
+      properties: {}
+      additionalProperties: false
+    execution:
+      server_name: amap
+      server:
+        transport: streamable_http
+        url: https://mcp.amap.com/mcp
+        query:
+          key:
+            env: AMAP_MAPS_API_KEY""",
+    )
+
+    document = SkillFileLoader().load(skill_path)
+
+    assert document.tools[0].name == "amap_maps"
+    assert document.tools[0].tool_type is ToolType.MCP
+    assert document.tools[0].execution_config == {
+        "server_name": "amap",
+        "server": {
+            "transport": "streamable_http",
+            "url": "https://mcp.amap.com/mcp",
+            "query": {"key": {"env": "AMAP_MAPS_API_KEY"}},
+        },
+    }
+
+
+def test_file_loader_rejects_plaintext_mcp_collection_query_key(
+    tmp_path: Path,
+) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        """name: unsafe-amap-skill
+description: 包含明文 Key 的 MCP 工具集合
+tools:
+  - name: amap_maps
+    description: 高德地图 MCP 提供的全部工具
+    type: MCP
+    input_schema:
+      type: object
+      properties: {}
+    execution:
+      server_name: amap
+      server:
+        transport: streamable_http
+        url: https://mcp.amap.com/mcp
+        query:
+          key: plaintext-amap-key""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match="env 或 secret_ref"):
+        SkillFileLoader().load(skill_path)
+
+
+def test_file_loader_rejects_inline_stdio_mcp_collection(tmp_path: Path) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        """name: unsafe-stdio-collection
+description: 尝试启动本地进程的 MCP 工具集合
+tools:
+  - name: local_tools
+    description: 本地 MCP 工具集合
+    type: MCP
+    input_schema:
+      type: object
+      properties: {}
+    execution:
+      server_name: local
+      server:
+        transport: stdio
+        command: /bin/sh
+        args: [-c, whoami]""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match="server_ref"):
+        SkillFileLoader().load(skill_path)
+
+
+@pytest.mark.parametrize("transport", ["websocket", "unknown"])
+def test_file_loader_rejects_unsupported_inline_mcp_transport(
+    tmp_path: Path,
+    transport: str,
+) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        f"""name: unsafe-inline-transport
+description: 不支持的内联 MCP 协议
+tools:
+  - name: unsafe_tools
+    description: 非法 MCP 工具集合
+    type: MCP
+    input_schema:
+      type: object
+      properties: {{}}
+    execution:
+      server_name: unsafe
+      server:
+        transport: {transport}
+        url: https://mcp.example.com/mcp""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match="transport"):
+        SkillFileLoader().load(skill_path)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://mcp.example.com/mcp",
+        "file:///etc/passwd",
+        "https://127.0.0.1/mcp",
+        "https://[::1]/mcp",
+        "https://169.254.169.254/latest/meta-data",
+        "https://10.0.0.8/mcp",
+    ],
+)
+def test_file_loader_rejects_non_public_https_inline_mcp_urls(
+    tmp_path: Path,
+    url: str,
+) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        f"""name: unsafe-inline-url
+description: 非安全 MCP URL
+tools:
+  - name: unsafe_tools
+    description: 非安全 MCP 工具集合
+    type: MCP
+    input_schema:
+      type: object
+      properties: {{}}
+    execution:
+      server_name: unsafe
+      server:
+        transport: streamable_http
+        url: {url}""",
+    )
+
+    with pytest.raises(ToolDefinitionError, match="公网 HTTPS"):
+        SkillFileLoader().load(skill_path)
+
+
+def test_file_loader_accepts_registered_mcp_tool_collection(tmp_path: Path) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        """name: registered-mcp-collection
+description: 宿主预注册 MCP 工具集合
+tools:
+  - name: internal_tools
+    description: 内部 MCP Server 提供的全部工具
+    type: MCP
+    input_schema:
+      type: object
+      properties: {}
+    execution:
+      server_name: internal
+      server_ref: mcp/internal""",
+    )
+
+    document = SkillFileLoader().load(skill_path)
+
+    assert document.tools[0].execution_config == {
+        "server_name": "internal",
+        "server_ref": "mcp/internal",
+    }
+
+
 @pytest.mark.parametrize(
     "server_config",
     [

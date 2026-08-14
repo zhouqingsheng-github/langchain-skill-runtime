@@ -15,6 +15,8 @@ from langchain_skill_runtime.errors import (
     SkillDisabledError,
     SkillNotFoundError,
     SkillRuntimeConfigurationError,
+    ToolDefinitionError,
+    ToolUnavailableError,
 )
 from langchain_skill_runtime.models.bundle import SkillBundle
 from langchain_skill_runtime.models.context import CompileContext
@@ -23,7 +25,7 @@ from langchain_skill_runtime.models.skill import (
     SkillDefinition,
     SkillDocument,
 )
-from langchain_skill_runtime.models.tool import ResolvedToolDefinition
+from langchain_skill_runtime.models.tool import ResolvedToolDefinition, ToolType
 from langchain_skill_runtime.parsing.skill_file_loader import SkillFileLoader
 from langchain_skill_runtime.parsing.skill_parser import SkillParser
 from langchain_skill_runtime.prompting.prompt_compiler import PromptCompiler
@@ -152,12 +154,18 @@ class SkillRuntime:
                 )
                 continue
             try:
-                built = await self._tool_factory.build(definition, context)
-            except Exception:  # noqa: BLE001 - sanitize adapter boundary failures
+                built = await self._tool_factory.build_many(definition, context)
+            except Exception as exc:  # noqa: BLE001 - sanitize adapter boundary
+                controlled_reason = (
+                    str(exc)
+                    if isinstance(exc, (ToolDefinitionError, ToolUnavailableError))
+                    else None
+                )
                 if definition.required:
-                    raise SkillCompileError(
-                        f"必需 Tool 构建失败: {definition.name}"
-                    ) from None
+                    message = f"必需 Tool 构建失败: {definition.name}"
+                    if controlled_reason:
+                        message = f"{message}；原因：{controlled_reason}"
+                    raise SkillCompileError(message) from None
                 diagnostics.append(
                     Diagnostic(
                         code="TOOL_SKIPPED",
@@ -166,8 +174,10 @@ class SkillRuntime:
                     )
                 )
                 continue
-            built_tools.append(built)
-            successful_definitions.append(definition)
+            built_tools.extend(built)
+            successful_definitions.extend(self._expanded_definitions(definition, built))
+
+        self._validate_exposed_names(successful_definitions)
 
         system_prompt = self._prompt_compiler.compile(
             governed,
@@ -186,6 +196,34 @@ class SkillRuntime:
                 successful_definitions,
             ),
         )
+
+    @staticmethod
+    def _expanded_definitions(
+        definition: ResolvedToolDefinition,
+        built_tools: Sequence[BaseTool],
+    ) -> list[ResolvedToolDefinition]:
+        is_mcp_collection = (
+            definition.tool_type is ToolType.MCP
+            and "tool_name" not in definition.execution_config
+        )
+        if (
+            not is_mcp_collection
+            and len(built_tools) == 1
+            and built_tools[0].name == definition.name
+        ):
+            return [definition]
+        return [
+            definition.model_copy(
+                update={
+                    "id": f"{definition.id}:{tool.name}",
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": {"type": "object", "properties": {}},
+                    "output_schema": None,
+                }
+            )
+            for tool in built_tools
+        ]
 
     @staticmethod
     def _governance_diagnostics(
