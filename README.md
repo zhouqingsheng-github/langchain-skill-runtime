@@ -16,7 +16,7 @@ SKILL.md / 结构化对象 / Repository
                 └── tuple[BaseTool, ...]
 ```
 
-当前版本：`0.3.3`。项目仍处于 Alpha 阶段，公开 API 会遵循语义化版本进行演进。
+当前版本：`0.3.4`。项目仍处于 Alpha 阶段，公开 API 会遵循语义化版本进行演进。
 
 ## 核心能力
 
@@ -100,9 +100,7 @@ async def main() -> None:
     registry = InMemoryFunctionRegistry()
     registry.register("math.add", add_numbers)
 
-    runtime = SkillRuntime(
-        tool_factory=ToolFactory([PythonFunctionAdapter(registry)])
-    )
+    runtime = SkillRuntime(tool_factory=ToolFactory([PythonFunctionAdapter(registry)]))
     bundle = await runtime.compile_file("skills/calculator/SKILL.md")
 
     print(bundle.system_prompt)
@@ -185,10 +183,10 @@ tool_factory = ToolFactory(
 
 ## MCP 工具集
 
-安装 MCP 可选依赖：
+以下示例同时使用 MCP 工具和 LangChain Agent，因此安装两个可选依赖：
 
 ```bash
-uv add 'langchain-skill-runtime[mcp] @ git+https://github.com/zhouqingsheng-github/langchain-skill-runtime.git'
+uv add 'langchain-skill-runtime[agent,mcp] @ git+https://github.com/zhouqingsheng-github/langchain-skill-runtime.git'
 ```
 
 在 `SKILL.md` 中声明一个 `MCP` 对象且不写 `tool_name`，表示使用该 MCP
@@ -217,6 +215,8 @@ tools:
 宿主必须明确允许内联远程地址：
 
 ```python
+from langchain.agents import create_agent
+
 from langchain_skill_runtime import SkillRuntime
 from langchain_skill_runtime.adapters import (
     AllowHostsMcpUrlPolicy,
@@ -225,15 +225,28 @@ from langchain_skill_runtime.adapters import (
     ToolFactory,
 )
 
-provider = LangChainMcpToolProvider(
+async with LangChainMcpToolProvider(
     url_policy=AllowHostsMcpUrlPolicy({"mcp.example.com"})
-)
-runtime = SkillRuntime(tool_factory=ToolFactory([McpToolAdapter(provider)]))
-bundle = await runtime.compile_file("skills/maps/SKILL.md")
+) as provider:
+    runtime = SkillRuntime(tool_factory=ToolFactory([McpToolAdapter(provider)]))
+    bundle = await runtime.compile_file("skills/maps/SKILL.md")
 
-# 名称来自 MCP tools/list 的真实结果
-print([tool.name for tool in bundle.tools])
+    # 名称来自 MCP tools/list 的真实结果。
+    print([tool.name for tool in bundle.tools])
+
+    # 编译和多步工具调用都在同一 Provider 作用域内完成。
+    agent = create_agent(
+        model=model,
+        tools=list(bundle.tools),
+        system_prompt=bundle.system_prompt,
+    )
+    result = await agent.ainvoke(request)
 ```
+
+需要多步操作且依赖 Server 状态的 MCP，应把编译和整次调用放在
+`async with LangChainMcpToolProvider(...)` 作用域内。同一 `server_name`
+的工具会共享同一 MCP Session，退出作用域时会统一释放。无状态单次调用
+仍可以不使用显式作用域，保持原有行为。
 
 也可以使用 `PublicHttpsMcpUrlPolicy`，要求地址使用 HTTPS 且所有 DNS 解析结果
 都是公网地址。生产系统若把 MCP 配置集中治理，可在 `SKILL.md` 中使用
@@ -346,4 +359,3 @@ MCP Server，并配置对应凭据。
 ## 许可证
 
 本项目采用 [Apache License 2.0](LICENSE) 开源。
-

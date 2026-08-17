@@ -1,6 +1,6 @@
 [project]
 name = "langchain-skill-runtime"
-version = "0.3.3"
+version = "0.3.4"
 description = "Compile SKILL.md files or structured Skill objects into heterogeneous LangChain tools"
 readme = "README.md"
 license = "Apache-2.0"

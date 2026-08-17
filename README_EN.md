@@ -16,7 +16,7 @@ SKILL.md / structured objects / repositories
                     └── tuple[BaseTool, ...]
 ```
 
-Current version: `0.3.3`. The project is currently Alpha software; public APIs
+Current version: `0.3.4`. The project is currently Alpha software; public APIs
 will evolve under semantic versioning.
 
 ## Features
@@ -101,9 +101,7 @@ async def main() -> None:
     registry = InMemoryFunctionRegistry()
     registry.register("math.add", add_numbers)
 
-    runtime = SkillRuntime(
-        tool_factory=ToolFactory([PythonFunctionAdapter(registry)])
-    )
+    runtime = SkillRuntime(tool_factory=ToolFactory([PythonFunctionAdapter(registry)]))
     bundle = await runtime.compile_file("skills/calculator/SKILL.md")
 
     print(bundle.system_prompt)
@@ -190,10 +188,10 @@ tool_factory = ToolFactory(
 
 ## MCP tool collections
 
-Install the MCP extra:
+The example below uses MCP tools and a LangChain Agent, so install both extras:
 
 ```bash
-uv add 'langchain-skill-runtime[mcp] @ git+https://github.com/zhouqingsheng-github/langchain-skill-runtime.git'
+uv add 'langchain-skill-runtime[agent,mcp] @ git+https://github.com/zhouqingsheng-github/langchain-skill-runtime.git'
 ```
 
 An `MCP` declaration without `tool_name` represents every tool exposed by the
@@ -222,6 +220,8 @@ tools:
 The host must explicitly authorize an inline remote address:
 
 ```python
+from langchain.agents import create_agent
+
 from langchain_skill_runtime import SkillRuntime
 from langchain_skill_runtime.adapters import (
     AllowHostsMcpUrlPolicy,
@@ -230,15 +230,30 @@ from langchain_skill_runtime.adapters import (
     ToolFactory,
 )
 
-provider = LangChainMcpToolProvider(
+async with LangChainMcpToolProvider(
     url_policy=AllowHostsMcpUrlPolicy({"mcp.example.com"})
-)
-runtime = SkillRuntime(tool_factory=ToolFactory([McpToolAdapter(provider)]))
-bundle = await runtime.compile_file("skills/maps/SKILL.md")
+) as provider:
+    runtime = SkillRuntime(tool_factory=ToolFactory([McpToolAdapter(provider)]))
+    bundle = await runtime.compile_file("skills/maps/SKILL.md")
 
-# Names come from the real MCP tools/list response.
-print([tool.name for tool in bundle.tools])
+    # Names come from the real MCP tools/list response.
+    print([tool.name for tool in bundle.tools])
+
+    # Compilation and all stateful tool calls share the provider scope.
+    agent = create_agent(
+        model=model,
+        tools=list(bundle.tools),
+        system_prompt=bundle.system_prompt,
+    )
+    result = await agent.ainvoke(request)
 ```
+
+For multi-step MCP operations that depend on server state, keep compilation and
+the complete invocation inside an
+`async with LangChainMcpToolProvider(...)` scope. Tools from the same
+`server_name` then share one MCP Session, which is closed when the scope exits.
+Stateless one-shot calls can continue using the provider without an explicit
+scope and retain the previous behavior.
 
 `PublicHttpsMcpUrlPolicy` is also available and requires HTTPS with exclusively
 public DNS results. Applications with centrally governed MCP configuration can
@@ -354,4 +369,3 @@ with an authorized real MCP Server and its credentials before running it.
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
-
