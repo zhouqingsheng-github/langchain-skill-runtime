@@ -1,9 +1,12 @@
 """LangChain MCP client provider and secure connection preparation."""
 
+import asyncio
 import os
 import re
-from collections.abc import Callable, Mapping
-from typing import Any, Protocol, cast
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AsyncExitStack
+from types import TracebackType
+from typing import Any, Protocol, Self, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langchain_core.tools import BaseTool
@@ -23,6 +26,7 @@ class _McpClient(Protocol):
 
 
 McpClientFactory = Callable[[dict[str, Mapping[str, Any]]], _McpClient]
+McpSessionToolLoader = Callable[[Any], Awaitable[list[BaseTool]]]
 
 
 class LangChainMcpToolProvider:
@@ -35,12 +39,49 @@ class LangChainMcpToolProvider:
         *,
         server_config_provider: McpServerConfigProvider | None = None,
         url_policy: McpUrlPolicy | None = None,
+        session_tool_loader: McpSessionToolLoader | None = None,
     ) -> None:
         self._secret_provider = secret_provider
         self._server_config_provider = server_config_provider
         self._url_policy = url_policy or PublicHttpsMcpUrlPolicy()
         self._has_explicit_url_policy = url_policy is not None
         self._client_factory = client_factory or self._default_client_factory
+        self._session_tool_loader = (
+            session_tool_loader or self._default_session_tool_loader
+        )
+        self._session_stack: AsyncExitStack | None = None
+        self._session_tools: dict[str, list[BaseTool]] = {}
+        self._session_lock: asyncio.Lock | None = None
+
+    async def __aenter__(self) -> Self:
+        """Open one host-managed scope for stateful MCP tool calls."""
+
+        if self._session_stack is not None:
+            raise RuntimeError("MCP Provider 已在运行作用域中")
+        stack = AsyncExitStack()
+        await stack.__aenter__()
+        self._session_stack = stack
+        self._session_tools = {}
+        self._session_lock = asyncio.Lock()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Close every MCP Session opened in the current scope."""
+
+        stack = self._session_stack
+        if stack is None:
+            return False
+        try:
+            return await stack.__aexit__(exc_type, exc, traceback)
+        finally:
+            self._session_stack = None
+            self._session_tools = {}
+            self._session_lock = None
 
     async def get_tool(
         self,
@@ -81,10 +122,56 @@ class LangChainMcpToolProvider:
             raise ToolUnavailableError("MCP 凭据解析失败") from None
 
         try:
+            if self._session_stack is not None:
+                return await self._get_session_tools(server_name, prepared)
             client = self._client_factory({server_name: prepared})
             return await client.get_tools(server_name=server_name)
         except Exception:  # noqa: BLE001 - sanitize arbitrary MCP client failures
             raise ToolUnavailableError("MCP 工具发现失败") from None
+
+    async def _get_session_tools(
+        self,
+        server_name: str,
+        prepared: Mapping[str, Any],
+    ) -> list[BaseTool]:
+        cached = self._session_tools.get(server_name)
+        if cached is not None:
+            return cached
+        lock = self._session_lock
+        stack = self._session_stack
+        if lock is None or stack is None:
+            raise RuntimeError("MCP Provider 作用域已结束")
+        async with lock:
+            cached = self._session_tools.get(server_name)
+            if cached is not None:
+                return cached
+            client = self._client_factory({server_name: prepared})
+            session_factory = getattr(client, "session", None)
+            if session_factory is None:
+                raise RuntimeError("MCP Client 不支持显式 Session")
+            candidate = AsyncExitStack()
+            await candidate.__aenter__()
+            try:
+                session = await candidate.enter_async_context(
+                    session_factory(server_name)
+                )
+                tools = await self._session_tool_loader(session)
+            except BaseException:
+                await candidate.aclose()
+                raise
+            stack.push_async_callback(candidate.aclose)
+            self._session_tools[server_name] = tools
+            return tools
+
+    @staticmethod
+    async def _default_session_tool_loader(session: Any) -> list[BaseTool]:
+        try:
+            from langchain_mcp_adapters.tools import load_mcp_tools
+        except ImportError:
+            raise ToolUnavailableError(
+                "使用 MCP Tool 需要安装 langchain-skill-runtime[mcp]"
+            ) from None
+        return cast(list[BaseTool], await load_mcp_tools(session))
 
     async def _authorize_remote_connection(
         self,
