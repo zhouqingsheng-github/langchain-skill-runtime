@@ -34,7 +34,7 @@
 - Produces: `session_tool_loader(session: Any) -> Awaitable[list[BaseTool]]` 可选构造参数。
 - Produces: 作用域内按 `server_name` 缓存的 Session 工具集。
 
-- [ ] **Step 1: 写入状态 Session 测试替身和核心失败用例**
+- [x] **Step 1: 写入状态 Session 测试替身和核心失败用例**
 
 ```python
 import asyncio
@@ -116,7 +116,7 @@ async def test_managed_tools_share_one_session() -> None:
     assert client.closed == 1
 ```
 
-- [ ] **Step 2: 在实现前写入全部生命周期边界用例**
+- [x] **Step 2: 在实现前写入全部生命周期边界用例**
 
 ```python
 @pytest.mark.asyncio
@@ -206,7 +206,7 @@ async def test_unmanaged_provider_keeps_temporary_loading() -> None:
     assert client.calls == 1
 ```
 
-- [ ] **Step 3: 运行测试并确认 RED**
+- [x] **Step 3: 运行测试并确认 RED**
 
 ```bash
 UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-uv-cache \
@@ -215,7 +215,7 @@ UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-uv-cache \
 
 Expected: 5 个 lifecycle 用例 FAIL，原因是构造器尚无 `session_tool_loader` 且 Provider 尚未实现异步上下文管理协议；无状态用例 PASS。
 
-- [ ] **Step 4: 实现最小通用作用域**
+- [x] **Step 4: 实现最小通用作用域**
 
 `provider.py` 增加：
 
@@ -324,7 +324,7 @@ async def _default_session_tool_loader(session: Any) -> list[BaseTool]:
     return cast(list[BaseTool], await load_mcp_tools(session))
 ```
 
-- [ ] **Step 5: 运行 GREEN、静态检查并提交**
+- [x] **Step 5: 运行 GREEN、静态检查并提交**
 
 ```bash
 UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-uv-cache \
@@ -361,7 +361,7 @@ Expected: `6 passed`，静态检查通过。
 - Consumes: Task 1 的 `async with LangChainMcpToolProvider(...) as provider`。
 - Produces: `langchain-skill-runtime==0.3.4` wheel 和中英文使用说明。
 
-- [ ] **Step 1: 升级版本并更新中英文 MCP 示例**
+- [x] **Step 1: 升级版本并更新中英文 MCP 示例**
 
 `pyproject.toml` 和 README 版本号从 `0.3.3` 改为 `0.3.4`。MCP 示例改为：
 
@@ -384,7 +384,7 @@ async with LangChainMcpToolProvider(
 文档明确：无状态单次工具可继续使用原方式；多步有状态 MCP
 必须在 Provider 异步作用域内完成 Agent 运行。
 
-- [ ] **Step 2: 更新锁文件并执行库级验证**
+- [x] **Step 2: 更新锁文件并执行库级验证**
 
 ```bash
 UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-uv-cache uv lock
@@ -394,7 +394,7 @@ UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-uv-cache uv run ruff format --
 UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-uv-cache uv run mypy src tests
 ```
 
-- [ ] **Step 3: 构建 wheel 并提交**
+- [x] **Step 3: 构建 wheel 并提交**
 
 ```bash
 UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-uv-cache uv build --wheel
@@ -419,7 +419,7 @@ git commit -m "release: 准备0.3.4会话生命周期修复"
 - Consumes: Task 2 的 `0.3.4` wheel 和 Provider 异步作用域。
 - Produces: 编译 Skill 和 Agent 多步工具调用共享同一 MCP Session 的 Demo。
 
-- [ ] **Step 1: 复现修复前的真实 RED**
+- [x] **Step 1: 复现修复前的真实 RED**
 
 ```bash
 cd /Users/zqs/PycharmProjects/AI/langchain-skill-runtime-openai-demo
@@ -428,7 +428,7 @@ cd /Users/zqs/PycharmProjects/AI/langchain-skill-runtime-openai-demo
 
 Expected: 模型可调用 `browser_navigate`，但后续工具返回 `about:blank`，最终触发 `GraphRecursionError`。
 
-- [ ] **Step 2: 更新 wheel 依赖**
+- [x] **Step 2: 更新 wheel 依赖**
 
 `pyproject.toml` 改为 `langchain-skill-runtime[agent,mcp]==0.3.4`，本地源改为：
 
@@ -443,7 +443,7 @@ UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-demo-uv-cache uv lock
 UV_CACHE_DIR=/private/tmp/langchain-skill-runtime-demo-uv-cache uv sync
 ```
 
-- [ ] **Step 3: 让 Provider 作用域覆盖编译和 Agent 调用**
+- [x] **Step 3: 让 Provider 作用域覆盖编译和 Agent 调用**
 
 ```python
 async def compile_playwright_skill(
@@ -465,7 +465,6 @@ async with provider:
         model=model,
         tools=list(bundle.tools),
         system_prompt=bundle.system_prompt,
-        debug=True,
     )
     result = await agent.ainvoke(
         {"messages": [{"role": "user", "content": question}]},
@@ -475,7 +474,7 @@ async with provider:
 
 `recursion_limit=12` 只为正常多步操作提供步数，不用来规避 Session 丢失。
 
-- [ ] **Step 4: 运行 Demo 回归和静态检查**
+- [x] **Step 4: 运行 Demo 回归和静态检查**
 
 ```bash
 .venv/bin/pytest tests/test_playwright_skill.py -q
@@ -484,7 +483,7 @@ async with provider:
 .venv/bin/mypy src/skill_runtime_openai_demo/playwright.py
 ```
 
-- [ ] **Step 5: 只提交 Demo 本任务文件**
+- [x] **Step 5: 只提交 Demo 本任务文件**
 
 ```bash
 git commit --only -m "fix: 保持MCP Agent运行会话" -- \
@@ -507,7 +506,7 @@ git commit --only -m "fix: 保持MCP Agent运行会话" -- \
 - Consumes: Task 3 安装的 `langchain-skill-runtime==0.3.4`。
 - Produces: 至少两次连续原生工具调用保持同一 Server 状态的真实证据。
 
-- [ ] **Step 1: 运行两步真实对话**
+- [x] **Step 1: 运行两步真实对话**
 
 ```bash
 cd /Users/zqs/PycharmProjects/AI/langchain-skill-runtime-openai-demo
@@ -517,7 +516,7 @@ cd /Users/zqs/PycharmProjects/AI/langchain-skill-runtime-openai-demo
 
 Expected: 发现真实原生工具；至少调用导航和后续观察或点击；第二步不返回 `about:blank`；Agent 不触发 `GraphRecursionError`。
 
-- [ ] **Step 2: 运行百度业务对话**
+- [x] **Step 2: 运行百度业务对话**
 
 ```bash
 .venv/bin/python -m skill_runtime_openai_demo.playwright \
@@ -526,7 +525,7 @@ Expected: 发现真实原生工具；至少调用导航和后续观察或点击�
 
 百度验证码是目标站结果；验收重点是连续工具调用不丢失 Session。
 
-- [ ] **Step 3: 运行最终验证**
+- [x] **Step 3: 运行最终验证**
 
 ```bash
 cd /Users/zqs/PycharmProjects/AI/langchain-skill-runtime
@@ -544,6 +543,17 @@ git diff --check
 
 Expected: Library `src/` 无业务特判匹配，库和 Demo 目标回归通过。
 
-- [ ] **Step 4: 记录执行结果**
+- [x] **Step 4: 记录执行结果**
 
 在本文档末尾记录实际测试数量、wheel 文件名、Demo 原生工具数量、连续工具调用名称和最终页面结果。
+
+## 实际执行结果
+
+- 修复前 RED：5 个生命周期用例失败、1 个无状态兼容用例通过；失败原因是 Provider 尚未支持会话工具加载器和异步上下文协议。
+- 库最终验证：`7 passed`；Ruff 检查通过；49 个文件格式检查通过；Mypy 检查 42 个源文件通过。
+- 构建产物：`dist/langchain_skill_runtime-0.3.4-py3-none-any.whl`。
+- Demo 依赖：虚拟环境实际安装 `langchain-skill-runtime==0.3.4`。
+- Demo 回归：真实网络下 `12 passed`，包括现有高德 MCP 场景；目标 Playwright 文件 Ruff、格式和 Mypy 检查通过。
+- 多步真实验收：发现 24 个 Playwright MCP 原生工具，连续调用 `browser_navigate`、`browser_snapshot`、`browser_click`，最终页面标题为 `Example Domains`；后续调用未回到 `about:blank`。
+- 百度默认示例：调用 `browser_navigate` 打开百度“住小叮”公开查询地址，页面标题为 `住小叮_百度搜索`，搜索结果页正常加载。
+- 已知模型波动：让当前模型从百度首页自行填写和点击时，曾生成不符合这版 MCP Schema 的 `ref` 参数；因此无参数稳定示例使用等价的公开查询地址。这不影响 Provider 会话复用结论。
